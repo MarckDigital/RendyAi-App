@@ -25,13 +25,13 @@ logger = logging.getLogger(__name__)
 DATA_DIR = 'data'
 USUARIO_JSON = os.path.join(DATA_DIR, 'usuario.json')
 TICKERS_IBOV = [
-    'ABEV3.SA', 'B3SA3.SA', 'BBAS3.SA', 'BBDC4.SA', 'BBSE3.SA', 'BRAP4.SA', 
+    'ABEV3.SA', 'B3SA3.SA', 'BBAS3.SA', 'BBDC4.SA', 'BBSE3.SA', 'BRAP4.SA',
     'BRFS3.SA', 'BRKM5.SA', 'CCRO3.SA', 'CIEL3.SA', 'CMIG4.SA', 'CPLE6.SA',
-    'CSAN3.SA', 'CSNA3.SA', 'CYRE3.SA', 'ECOR3.SA', 'EGIE3.SA', 'ELET3.SA', 
-    'EMBR3.SA', 'ENBR3.SA', 'EQTL3.SA', 'GGBR4.SA', 'GOAU4.SA', 'HAPV3.SA', 
+    'CSAN3.SA', 'CSNA3.SA', 'CYRE3.SA', 'ECOR3.SA', 'EGIE3.SA', 'ELET3.SA',
+    'EMBR3.SA', 'ENBR3.SA', 'EQTL3.SA', 'GGBR4.SA', 'GOAU4.SA', 'HAPV3.SA',
     'HYPE3.SA', 'ITSA4.SA', 'ITUB4.SA', 'JBSS3.SA', 'LREN3.SA',
-    'MGLU3.SA', 'MRFG3.SA', 'MRVE3.SA', 'MULT3.SA', 'NTCO3.SA', 'PCAR3.SA', 
-    'PETR3.SA', 'PETR4.SA', 'PRIO3.SA', 'RADL3.SA', 'RAIL3.SA', 'RENT3.SA', 
+    'MGLU3.SA', 'MRFG3.SA', 'MRVE3.SA', 'MULT3.SA', 'NTCO3.SA', 'PCAR3.SA',
+    'PETR3.SA', 'PETR4.SA', 'PRIO3.SA', 'RADL3.SA', 'RAIL3.SA', 'RENT3.SA',
     'SANB11.SA', 'SBSP3.SA', 'SUZB3.SA', 'TAEE11.SA', 'UGPA3.SA', 'USIM5.SA',
     'VALE3.SA', 'VIVT3.SA', 'WEGE3.SA', 'YDUQ3.SA'
 ]
@@ -90,7 +90,6 @@ def inicializar_sessao():
         else:
             st.session_state.step = "welcome"
 
-    # Valores padrão para session_state
     default_values = {'ver_todos': False, 'valor_investir': 5000.0, 'user_name': '', 'user_email': ''}
     for key, value in default_values.items():
         if key not in st.session_state:
@@ -144,11 +143,11 @@ class RendyFinanceAgent:
             info = acao.info
             if not info or 'longName' not in info or not info.get('longName'):
                 return {'erro': f"Dados insuficientes para '{ticker}'."}
-            
+
             def get_numeric(key: str, default: float = 0.0) -> float:
                 val = info.get(key, default)
                 return float(val) if val is not None else default
-            
+
             dados = {
                 'ticker': ticker,
                 'nome_empresa': info.get('longName', 'N/A'),
@@ -172,12 +171,13 @@ class RendyFinanceAgent:
             resultado = self.analisar_ativo(ticker)
             if 'erro' not in resultado and resultado.get('preco_atual', 0) > 0:
                 resultados.append(resultado)
-            progress_bar.progress((i + 1) / len(TICKERS_IBOV), f"Analisando {ticker}...")
+            # CORREÇÃO: Progress SEMPRE entre 0.0 e 1.0
+            progress = min((i + 1) / len(TICKERS_IBOV), 1.0)
+            progress_bar.progress(progress, f"Analisando {ticker}...")
         progress_bar.empty()
         return sorted(resultados, key=lambda x: x.get('score', 0), reverse=True)
 
 class RendyXaiAgent:
-    """Agente responsável por explicações, projeções e recomendações"""
     def _gerar_recomendacao(self, score: float) -> str:
         if not isinstance(score, (int, float)):
             score = 0
@@ -208,11 +208,11 @@ class RendyXaiAgent:
         if valor_investir <= 0 or preco_acao <= 0:
             st.warning("Dados insuficientes para gerar projeção (valor ou preço da ação inválidos).")
             return
-        
+
         qtd_acoes = int(valor_investir / preco_acao)
         valor_investido_real = qtd_acoes * preco_acao
         renda_passiva_anual = valor_investido_real * dy
-        
+
         st.subheader(f"📊 Relatório Personalizado para {nome_usuario}")
         st.markdown(f"### {analise_ativo.get('nome_empresa', 'N/A')} ({analise_ativo.get('ticker', 'N/A')})")
 
@@ -225,7 +225,6 @@ class RendyXaiAgent:
         with col3:
             st.metric("💎 Potencial de Valorização", f"{roe*100:.2f}%", "Baseado no ROE")
 
-        # Visual extra: gráfico de dividend yield
         if dy > 0:
             st.markdown("##### Histórico de Dividend Yield (%)")
             st.bar_chart(pd.DataFrame({'Dividend Yield (%)': [dy*100]}, index=[analise_ativo['ticker']]))
@@ -239,7 +238,7 @@ class RendyXaiAgent:
             pvp = analise_ativo.get('p_vp', 0)
 
             st.write(f"**Score Custo/Benefício: {score:.1f} / 10**")
-            st.progress(score / 10)
+            st.progress(min(score / 10, 1.0))  # CORREÇÃO: Sempre <= 1.0
             st.markdown("""
             <small>O <b>Score</b> avalia custo/benefício considerando dividendos, ROE, P/L e P/VP. Quanto mais próximo de 10, melhor.</small>
             """, unsafe_allow_html=True)
@@ -248,7 +247,7 @@ class RendyXaiAgent:
                 st.success(f"- **Dividend Yield {dy*100:.2f}%:** Bom potencial de renda passiva.")
             else:
                 st.warning("- **Dividend Yield:** Dado não disponível ou a empresa não paga dividendos.")
-            
+
             if pl > 0:
                 if pl <= 15:
                     st.success(f"- **P/L {pl:.2f}:** Potencialmente subvalorizada (bom).")
@@ -261,7 +260,7 @@ class RendyXaiAgent:
                 st.success(f"- **ROE {roe*100:.2f}%:** Boa capacidade de gerar lucro.")
             else:
                 st.warning("- **ROE:** Dado não disponível.")
-            
+
             if pvp > 0:
                 if pvp <= 1.5:
                     st.success(f"- **P/VP {pvp:.2f}:** Pode ser uma boa oportunidade de valor.")
@@ -328,7 +327,6 @@ def tela_cadastro():
                     st.error("❌ Erro ao criar conta.")
 
 def tela_principal():
-    """Tela principal do aplicativo com as análises."""
     primeiro_nome = st.session_state.get('user_name', 'Investidor').split(' ')[0]
     col_title, col_btn = st.columns([4, 1])
     with col_title:
@@ -367,7 +365,7 @@ def tela_principal():
         df_display['Div. Yield'] = df['dividend_yield'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
         df_display['P/L'] = df['p_l'].apply(lambda x: f"{x:.2f}" if x > 0 else "N/A")
         df_display['ROE'] = df['roe'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
-        
+
         st.dataframe(
             df_display.head(10 if not st.session_state.ver_todos else None),
             hide_index=True, use_container_width=True,
