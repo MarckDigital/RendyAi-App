@@ -6,9 +6,9 @@ import json
 import re
 import logging
 from datetime import datetime
-from typing import Dict, List
+import pytz
 
-# ========== CONFIGURAÇÕES E CONSTANTES ==========
+# =================== CONFIGURAÇÕES E CONSTANTES ===================
 st.set_page_config(
     page_title="Rendy AI - Assessor de Investimentos",
     page_icon="🤖",
@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = 'data'
 USUARIO_JSON = os.path.join(DATA_DIR, 'usuario.json')
+FUSO_BR = pytz.timezone('America/Sao_Paulo')
+
 LISTA_TICKERS_IBOV = [
     'ABEV3.SA', 'B3SA3.SA', 'BBAS3.SA', 'BBDC4.SA', 'BBSE3.SA', 'BRAP4.SA',
     'BRFS3.SA', 'BRKM5.SA', 'CCRO3.SA', 'CIEL3.SA', 'CMIG4.SA', 'CPLE6.SA',
@@ -32,21 +34,24 @@ LISTA_TICKERS_IBOV = [
 ]
 GLOSSARIO = {
     "Score": "Pontuação de até 10 que avalia custo/benefício considerando dividendos (DY), rentabilidade (ROE), preço/lucro (P/L) e preço/valor patrimonial (P/VP). Quanto mais perto de 10, melhor.",
-    "DY": "Dividend Yield: percentual dos dividendos pagos em relação ao preço da ação, anualizado.",
+    "DY": "Dividend Yield: percentual dos dividendos pagos em relação ao preço da ação, anualizado. O app limita DY a no máximo 30% ao ano por padrão para evitar distorções.",
     "P/L": "Preço dividido pelo lucro por ação. P/L baixo pode indicar ação barata.",
     "P/VP": "Preço dividido pelo valor patrimonial da empresa por ação. P/VP abaixo de 1 pode indicar ação descontada.",
     "ROE": "Retorno sobre o patrimônio líquido. Mede a eficiência da empresa em gerar lucros.",
-    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujo valor bruto dos critérios ultrapassou esse limite. São consideradas oportunidades excepcionais segundo o algoritmo. Destaque 🔥.",
+    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujo valor bruto dos critérios ultrapassou esse limite. São consideradas oportunidades excepcionais segundo o algoritmo! 🔥"
 }
 
-# ========== UTILITÁRIOS E SESSÃO ==========
+# =================== UTILITÁRIOS E SESSÃO ===================
+def agora_brasilia():
+    return datetime.now(FUSO_BR)
+
 def inicializar_ambiente():
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR)
 
 def salvar_usuario(nome: str, email: str):
     inicializar_ambiente()
-    dados = {'nome': nome, 'email': email, 'data_cadastro': datetime.now().isoformat()}
+    dados = {'nome': nome, 'email': email, 'data_cadastro': agora_brasilia().isoformat()}
     with open(USUARIO_JSON, 'w', encoding='utf-8') as f:
         json.dump(dados, f, ensure_ascii=False, indent=2)
     st.session_state['nome_usuario'] = nome
@@ -75,15 +80,32 @@ def inicializar_sessao():
     if 'lista_alocada' not in st.session_state:
         st.session_state['lista_alocada'] = []
 
-# ========== AGENTES E ANÁLISE DE AÇÕES ==========
+def validar_dy(dy: float):
+    """Valida e ajusta o Dividend Yield, limitando valores anormais."""
+    if dy is None or dy < 0:
+        return 0.0, "⚠️ O Dividend Yield informado é negativo ou inválido, ajustado para 0."
+    if dy > 1:  # Provavelmente veio em percentual, corrija para proporção
+        dy = dy / 100
+    if dy > 0.3:
+        return 0.3, (
+            """<div style='background: #fff3cd; border-left: 5px solid #ffecb5; padding: 8px;'>
+            <b>⚠️ ATENÇÃO:</b> O Dividend Yield informado para este ativo está acima de <b>30%</b>.<br>
+            Isso pode indicar erro na fonte de dados ou evento não recorrente.<br>
+            Consulte relatórios oficiais antes de investir.
+            </div>"""
+        )
+    return dy, ""
+
+# =================== AGENTES E ANÁLISE DE AÇÕES ===================
 class RendyFinanceAgent:
-    def analisar_ativo(self, ticker: str) -> Dict:
+    def analisar_ativo(self, ticker: str) -> dict:
         try:
             acao = yf.Ticker(ticker)
             info = acao.info
             historico = acao.history(period="1y")
             historico_close = historico['Close'] if not historico.empty else None
-            dy = info.get('dividendYield', 0) or 0
+            dy_raw = info.get('dividendYield', 0) or 0
+            dy, alerta_dy = validar_dy(float(dy_raw))
             pl = info.get('trailingPE', 0) or 0
             pvp = info.get('priceToBook', 0) or 0
             roe = info.get('returnOnEquity', 0) or 0
@@ -108,13 +130,14 @@ class RendyFinanceAgent:
                 "score": score_total,
                 "score_bruto": score_bruto,
                 "super_investimento": is_super,
-                "historico": historico_close
+                "historico": historico_close,
+                "alerta_dy": alerta_dy
             }
         except Exception as e:
             logger.error(f"Erro ao analisar {ticker}: {e}")
             return {"ticker": ticker, "error": str(e)}
 
-    def descobrir_oportunidades(self) -> List[Dict]:
+    def descobrir_oportunidades(self):
         resultados = []
         progress_bar = st.progress(0, "Analisando todo o mercado para você!")
         for i, ticker in enumerate(LISTA_TICKERS_IBOV):
@@ -126,7 +149,7 @@ class RendyFinanceAgent:
         progress_bar.empty()
         return sorted(resultados, key=lambda x: x.get('score', 0), reverse=True)
 
-# ========== UI EXPLICATIVA ==========
+# =================== UI EXPLICATIVA ===================
 def tooltip(texto):
     return f"ℹ️ <span style='color:gray;font-size:0.95em'>{texto}</span>"
 
@@ -135,7 +158,7 @@ def render_explicacao_campos():
     for key, desc in GLOSSARIO.items():
         st.markdown(f"- **{key}**: {desc}")
 
-# ========== ABAS ==========
+# =================== ABAS PRINCIPAIS ===================
 def aba_simulacao():
     st.header("🎯 Simulação Personalizada de Investimento")
     st.markdown("""
@@ -174,18 +197,36 @@ def aba_simulacao():
             qtd = int(valor // preco) if preco > 0 else 0
             investido = qtd * preco
             renda = investido * dy
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns(5)
             col1.metric("Score", f"{analise['score']:.1f}/10", help=GLOSSARIO["Score"])
-            col2.metric("Div. Yield", f"{dy*100:.2f}%", help=GLOSSARIO["DY"])
-            col3.metric("P/L", f"{analise['pl']:.2f}", help=GLOSSARIO["P/L"])
-            col4.metric("ROE", f"{roe*100:.2f}%", help=GLOSSARIO["ROE"])
-            st.success(
-                f"Com **R$ {valor:,.2f}** você compraria **{qtd} ações** e teria uma renda passiva anual estimada de **R$ {renda:,.2f}**."
-            )
+            col2.metric("Preço Atual", f"R$ {preco:,.2f}")
+            col3.metric("Div. Yield", f"{dy*100:.2f}%", help=GLOSSARIO["DY"])
+            col4.metric("P/L", f"{analise['pl']:.2f}", help=GLOSSARIO["P/L"])
+            col5.metric("ROE", f"{roe*100:.2f}%", help=GLOSSARIO["ROE"])
+
+            # Mensagem destacada, pluralização e didática
+            if qtd == 0:
+                st.warning(f"Com o valor de R$ {valor:,.2f}, não é possível adquirir nenhuma ação de {analise['nome_empresa']} ao preço atual.")
+            else:
+                st.success(
+                    f"""
+                    <b>Parabéns!</b> Com seu investimento de <b>R$ {valor:,.2f}</b>, você pode adquirir <b>{qtd} ação{'s' if qtd > 1 else ''}</b>.<br>
+                    Sua renda passiva anual estimada em dividendos será de <b style='color:green'>R$ {renda:,.2f}</b>.<br>
+                    <span style='font-size: 0.95em;'>O cálculo utiliza o Dividend Yield anualizado mais recente disponível. Resultados passados não garantem retornos futuros.</span>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            # Alerta amigável se DY estiver fora do padrão
+            if analise.get("alerta_dy"):
+                st.markdown(analise["alerta_dy"], unsafe_allow_html=True)
+
+            # SUPER INVESTIMENTO
             if analise.get('super_investimento'):
                 st.info("🔥 Esta ação é classificada como SUPER INVESTIMENTO pelo algoritmo! (i) "
                         "A pontuação bruta dela ultrapassa 10, ou seja, é ainda mais diferenciada segundo nossos critérios. "
                         + tooltip(GLOSSARIO["Super Investimento"]))
+
             if analise.get('historico') is not None and hasattr(analise['historico'], 'empty') and not analise['historico'].empty:
                 st.markdown("##### Evolução do Preço nos Últimos 12 Meses")
                 st.line_chart(analise['historico'])
@@ -206,13 +247,14 @@ def aba_ranking():
         st.error("Não foi possível carregar o ranking agora. Tente novamente.")
         return
     df = pd.DataFrame(oportunidades)
+    df['Preço Atual'] = df['preco_atual'].apply(lambda x: f"R$ {x:,.2f}" if x > 0 else "N/A")
     df['Div. Yield'] = df['dy'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
     df['P/L'] = df['pl'].apply(lambda x: f"{x:.2f}" if x > 0 else "N/A")
     df['ROE'] = df['roe'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
     df['Super Investimento'] = df['super_investimento'].apply(lambda x: '🔥' if x else '')
 
     st.dataframe(
-        df[['ticker', 'nome_empresa', 'score', 'Div. Yield', 'P/L', 'ROE', 'Super Investimento']].rename(
+        df[['ticker', 'nome_empresa', 'Preço Atual', 'score', 'Div. Yield', 'P/L', 'ROE', 'Super Investimento']].rename(
             columns={
                 'ticker':'Ticker', 
                 'nome_empresa':'Empresa', 
@@ -265,10 +307,12 @@ def aba_carteira():
         for item in st.session_state['lista_alocada']:
             analise = agent.analisar_ativo(item['ticker'])
             dy = float(analise['dy']) if analise.get('dy') else 0.0
+            preco = analise.get('preco_atual', 0.0)
             renda = item['valor_alocado'] * dy
             renda_total += renda
             linhas.append({
                 "Ticker": item['ticker'],
+                "Preço Atual": f"R$ {preco:,.2f}" if preco > 0 else "N/A",
                 "Valor Investido": f"R$ {item['valor_alocado']:,.2f}",
                 "DY": f"{dy*100:.2f}%",
                 "Renda Passiva": f"R$ {renda:,.2f}",
@@ -297,7 +341,7 @@ def aba_sobre():
     for k, v in GLOSSARIO.items():
         st.markdown(f"- **{k}**: {v}")
 
-# ========== MAIN ==========
+# =================== MAIN ===================
 def main():
     inicializar_sessao()
     st.title("🤖 Rendy AI - Assessor de Investimentos")
@@ -335,4 +379,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
