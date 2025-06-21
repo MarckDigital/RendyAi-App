@@ -38,7 +38,7 @@ GLOSSARIO = {
     "P/L": "Preço dividido pelo lucro por ação. P/L baixo pode indicar ação barata.",
     "P/VP": "Preço dividido pelo valor patrimonial da empresa por ação. P/VP abaixo de 1 pode indicar ação descontada.",
     "ROE": "Retorno sobre o patrimônio líquido. Mede a eficiência da empresa em gerar lucros.",
-    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujo valor bruto dos critérios ultrapassou esse limite. São consideradas oportunidades excepcionais segundo o algoritmo! 🔥"
+    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujo valor bruto dos critérios ultrapassou esse limite. São consideradas oportunidades excepcionais segundo o algoritmo."
 }
 
 # =================== UTILITÁRIOS E SESSÃO ===================
@@ -204,15 +204,17 @@ def aba_simulacao():
             col4.metric("P/L", f"{analise['pl']:.2f}", help=GLOSSARIO["P/L"])
             col5.metric("ROE", f"{roe*100:.2f}%", help=GLOSSARIO["ROE"])
 
-            # Mensagem destacada, pluralização e didática
+            # Mensagem destacada, pluralização e didática (CORRIGIDO AQUI)
             if qtd == 0:
                 st.warning(f"Com o valor de R$ {valor:,.2f}, não é possível adquirir nenhuma ação de {analise['nome_empresa']} ao preço atual.")
             else:
-                st.success(
+                st.markdown(
                     f"""
+                    <div style='background: #d4edda; border-left: 5px solid #28a745; padding: 8px; border-radius: 4px;'>
                     <b>Parabéns!</b> Com seu investimento de <b>R$ {valor:,.2f}</b>, você pode adquirir <b>{qtd} ação{'s' if qtd > 1 else ''}</b>.<br>
                     Sua renda passiva anual estimada em dividendos será de <b style='color:green'>R$ {renda:,.2f}</b>.<br>
                     <span style='font-size: 0.95em;'>O cálculo utiliza o Dividend Yield anualizado mais recente disponível. Resultados passados não garantem retornos futuros.</span>
+                    </div>
                     """,
                     unsafe_allow_html=True
                 )
