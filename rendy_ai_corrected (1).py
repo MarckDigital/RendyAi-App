@@ -261,11 +261,12 @@ def aba_ranking():
                 'ticker':'Ticker', 
                 'nome_empresa':'Empresa', 
                 'score':'Score',
-                'Super Investimento': f"Super Investimento {tooltip(GLOSSARIO['Super Investimento'])}"
+                'Super Investimento': 'Super Investimento'
             }),
         hide_index=True, use_container_width=True,
         column_config={"Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=10, format='%.1f')}
     )
+    st.info("A coluna 'Super Investimento' marca ações excepcionais com 🔥, segundo critérios do algoritmo. Veja a explicação completa no glossário abaixo.")
     render_explicacao_campos()
 
 def aba_carteira():
