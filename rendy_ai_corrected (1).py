@@ -36,7 +36,7 @@ GLOSSARIO = {
     "P/L": "Preço dividido pelo lucro por ação. P/L baixo pode indicar ação barata.",
     "P/VP": "Preço dividido pelo valor patrimonial da empresa por ação. P/VP abaixo de 1 pode indicar ação descontada.",
     "ROE": "Retorno sobre o patrimônio líquido. Mede a eficiência da empresa em gerar lucros.",
-    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujo valor bruto dos critérios ultrapassou esse limite. São consideradas oportunidades excepcionais segundo o algoritmo. Destaque 🔥.",
+    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujo valor bruto dos critérios ultrapassou esse limite. São consideradas oportunidades excepcionais segundo o algoritmo."
 }
 
 # ========== UTILITÁRIOS E SESSÃO ==========
@@ -347,5 +347,16 @@ def aba_sobre():
 # ========== MAIN ==========
 def main():
     inicializar_sessao()
-    st.title("🤖 Rendy AI
-
+    st.title("🤖 Rendy AI")  # LINHA CORRIGIDA
+
+    abas = {
+        "Simulação": aba_simulacao,
+        "Ranking": aba_ranking,
+        "Carteira": aba_carteira,
+        "Sobre/Glossário": aba_sobre,
+    }
+    aba = st.sidebar.radio("Navegue pelo app:", list(abas.keys()))
+    abas[aba]()
+
+if __name__ == "__main__":
+    main()
