@@ -36,6 +36,7 @@ GLOSSARIO = {
     "P/L": "Preço dividido pelo lucro por ação. P/L baixo pode indicar ação barata.",
     "P/VP": "Preço dividido pelo valor patrimonial da empresa por ação. P/VP abaixo de 1 pode indicar ação descontada.",
     "ROE": "Retorno sobre o patrimônio líquido. Mede a eficiência da empresa em gerar lucros.",
+    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujo valor bruto dos critérios ultrapassou esse limite. São consideradas oportunidades excepcionais segundo o algoritmo. Destaque 🔥.",
 }
 
 # ========== UTILITÁRIOS E SESSÃO ==========
@@ -93,7 +94,9 @@ class RendyFinanceAgent:
             score_pl = min(15 / pl if pl > 0 else 0, 1) * 1.5
             score_pvp = min(2 / pvp if pvp > 0 else 0, 1) * 1.5
             score_roe = min(roe / 0.20, 1) * 3 if roe > 0 else 0
-            score_total = min(score_dy + score_pl + score_pvp + score_roe, 10)
+            score_bruto = score_dy + score_pl + score_pvp + score_roe
+            score_total = min(score_bruto, 10)
+            is_super = score_bruto > 10
             return {
                 "ticker": ticker,
                 "nome_empresa": info.get('longName', ticker),
@@ -103,6 +106,8 @@ class RendyFinanceAgent:
                 "pvp": float(pvp),
                 "roe": float(roe),
                 "score": score_total,
+                "score_bruto": score_bruto,
+                "super_investimento": is_super,
                 "historico": historico_close
             }
         except Exception as e:
@@ -177,6 +182,10 @@ def aba_simulacao():
             st.success(
                 f"Com **R$ {valor:,.2f}** você compraria **{qtd} ações** e teria uma renda passiva anual estimada de **R$ {renda:,.2f}**."
             )
+            if analise.get('super_investimento'):
+                st.info("🔥 Esta ação é classificada como SUPER INVESTIMENTO pelo algoritmo! (i) "
+                        "A pontuação bruta dela ultrapassa 10, ou seja, é ainda mais diferenciada segundo nossos critérios. "
+                        + tooltip(GLOSSARIO["Super Investimento"]))
             if analise.get('historico') is not None and hasattr(analise['historico'], 'empty') and not analise['historico'].empty:
                 st.markdown("##### Evolução do Preço nos Últimos 12 Meses")
                 st.line_chart(analise['historico'])
@@ -200,11 +209,18 @@ def aba_ranking():
     df['Div. Yield'] = df['dy'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
     df['P/L'] = df['pl'].apply(lambda x: f"{x:.2f}" if x > 0 else "N/A")
     df['ROE'] = df['roe'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
+    df['Super Investimento'] = df['super_investimento'].apply(lambda x: '🔥' if x else '')
+
     st.dataframe(
-        df[['ticker', 'nome_empresa', 'score', 'Div. Yield', 'P/L', 'ROE']].rename(
-            columns={'ticker':'Ticker', 'nome_empresa':'Empresa', 'score':'Score'}),
+        df[['ticker', 'nome_empresa', 'score', 'Div. Yield', 'P/L', 'ROE', 'Super Investimento']].rename(
+            columns={
+                'ticker':'Ticker', 
+                'nome_empresa':'Empresa', 
+                'score':'Score',
+                'Super Investimento': f"Super Investimento {tooltip(GLOSSARIO['Super Investimento'])}"
+            }),
         hide_index=True, use_container_width=True,
-        column_config={"Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=10, format="%.1f")}
+        column_config={"Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=10, format='%.1f')}
     )
     render_explicacao_campos()
 
@@ -255,13 +271,16 @@ def aba_carteira():
                 "Ticker": item['ticker'],
                 "Valor Investido": f"R$ {item['valor_alocado']:,.2f}",
                 "DY": f"{dy*100:.2f}%",
-                "Renda Passiva": f"R$ {renda:,.2f}"
+                "Renda Passiva": f"R$ {renda:,.2f}",
+                "Super Investimento": "🔥" if analise.get('super_investimento') else ""
             })
         st.subheader("Resumo da Carteira")
         st.dataframe(pd.DataFrame(linhas), hide_index=True, use_container_width=True)
         st.success(f"Total investido: R$ {total_investido:,.2f} | Renda passiva anual estimada: R$ {renda_total:,.2f}")
         if total_investido > 0:
             st.info(f"Dividend Yield médio da carteira: {renda_total / total_investido * 100:.2f}%")
+        if any(linha["Super Investimento"] for linha in linhas):
+            st.markdown(tooltip(GLOSSARIO["Super Investimento"]), unsafe_allow_html=True)
         render_explicacao_campos()
 
 def aba_sobre():
@@ -316,3 +335,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
