@@ -32,8 +32,9 @@ LISTA_TICKERS_IBOV = [
     'SBSP3.SA', 'SUZB3.SA', 'TAEE11.SA', 'UGPA3.SA', 'USIM5.SA', 'VALE3.SA',
     'VIVT3.SA', 'WEGE3.SA', 'YDUQ3.SA'
 ]
+
 GLOSSARIO = {
-    "Score": "Pontuação de até 10 que avalia custo/benefício considerando dividendos (DY), rentabilidade (ROE), preço/lucro (P/L) e preço/valor patrimonial (P/VP). Quanto mais perto de 10, melhor.",
+    "Score": "Pontuação até 10 que avalia custo/benefício considerando dividendos (DY), rentabilidade (ROE), preço/lucro (P/L) e preço/valor patrimonial (P/VP). Quanto mais perto de 10, melhor.",
     "DY": "Dividend Yield: percentual dos dividendos pagos em relação ao preço da ação, anualizado. O app limita DY a no máximo 30% ao ano por padrão para evitar distorções.",
     "P/L": "Preço dividido pelo lucro por ação. P/L baixo pode indicar ação barata.",
     "P/VP": "Preço dividido pelo valor patrimonial da empresa por ação. P/VP abaixo de 1 pode indicar ação descontada.",
@@ -79,6 +80,13 @@ def inicializar_sessao():
         st.session_state['analise_simulacao'] = None
     if 'lista_alocada' not in st.session_state:
         st.session_state['lista_alocada'] = []
+
+def limpar_usuario():
+    if os.path.exists(USUARIO_JSON):
+        os.remove(USUARIO_JSON)
+    for k in ['nome_usuario', 'email_usuario']:
+        st.session_state[k] = ''
+    st.experimental_rerun()
 
 def validar_dy(dy: float):
     """Valida e ajusta o Dividend Yield, limitando valores anormais."""
@@ -137,17 +145,28 @@ class RendyFinanceAgent:
             logger.error(f"Erro ao analisar {ticker}: {e}")
             return {"ticker": ticker, "error": str(e)}
 
+    @st.cache_data(show_spinner="🔄 Analisando mercado, aguarde...")
     def descobrir_oportunidades(self):
         resultados = []
-        progress_bar = st.progress(0, "Analisando todo o mercado para você!")
         for i, ticker in enumerate(LISTA_TICKERS_IBOV):
             resultado = self.analisar_ativo(ticker)
             if 'error' not in resultado and resultado.get('preco_atual', 0) > 0:
                 resultados.append(resultado)
-            progress = min((i + 1) / len(LISTA_TICKERS_IBOV), 1.0)
-            progress_bar.progress(progress, f"Pesquisando {ticker}...")
-        progress_bar.empty()
         return sorted(resultados, key=lambda x: x.get('score', 0), reverse=True)
+
+    def explicacao_score(self, analise):
+        motivos = []
+        if analise['dy'] > 0.08:
+            motivos.append("Dividend Yield acima de 8%")
+        if analise['roe'] > 0.15:
+            motivos.append("ROE superior a 15%")
+        if analise['pl'] > 0 and analise['pl'] < 10:
+            motivos.append("P/L abaixo de 10")
+        if analise['pvp'] > 0 and analise['pvp'] < 1:
+            motivos.append("P/VP abaixo de 1 (ação descontada)")
+        if not motivos:
+            motivos.append("Atende critérios mistos de boa performance")
+        return " | ".join(motivos)
 
 # =================== UI EXPLICATIVA ===================
 def tooltip(texto):
@@ -158,8 +177,15 @@ def render_explicacao_campos():
     for key, desc in GLOSSARIO.items():
         st.markdown(f"- **{key}**: {desc}")
 
+def aviso_privacidade():
+    st.info(
+        "🔒 Seus dados são armazenados apenas localmente no seu navegador/dispositivo para garantir privacidade. "
+        "Você pode apagar seus dados a qualquer momento. Nenhuma informação é compartilhada com terceiros. "
+        "[Política de Privacidade](#politica-de-privacidade)"
+    )
+
 # =================== ABAS PRINCIPAIS ===================
-def aba_simulacao():
+def aba_simulacao(agent):
     st.header("🎯 Simulação Personalizada de Investimento")
     st.markdown("""
     Aqui você simula um investimento real, escolhendo uma ação e um valor para investir.  
@@ -180,7 +206,6 @@ def aba_simulacao():
         )
 
     if st.button("Simular meu investimento 🚀", type="primary", use_container_width=True):
-        agent = RendyFinanceAgent()
         with st.spinner("Analisando sua simulação..."):
             st.session_state['analise_simulacao'] = agent.analisar_ativo(ticker)
 
@@ -219,22 +244,23 @@ def aba_simulacao():
                     unsafe_allow_html=True
                 )
 
-            # Alerta amigável se DY estiver fora do padrão
             if analise.get("alerta_dy"):
                 st.markdown(analise["alerta_dy"], unsafe_allow_html=True)
 
-            # SUPER INVESTIMENTO
             if analise.get('super_investimento'):
                 st.info("🔥 Esta ação é classificada como SUPER INVESTIMENTO pelo algoritmo! (i) "
                         "A pontuação bruta dela ultrapassa 10, ou seja, é ainda mais diferenciada segundo nossos critérios. "
                         + tooltip(GLOSSARIO["Super Investimento"]))
+
+            # EXPLICABILIDADE XAI
+            st.info(f"🤖 Por que este score? {agent.explicacao_score(analise)}")
 
             if analise.get('historico') is not None and hasattr(analise['historico'], 'empty') and not analise['historico'].empty:
                 st.markdown("##### Evolução do Preço nos Últimos 12 Meses")
                 st.line_chart(analise['historico'])
             render_explicacao_campos()
 
-def aba_ranking():
+def aba_ranking(agent):
     st.header("🏆 Ranking de Oportunidades do Mercado")
     st.markdown("""
     Aqui você encontra as melhores oportunidades do momento, segundo o algoritmo do Rendy!
@@ -243,8 +269,11 @@ def aba_ranking():
     <br>
     Dica: Passe o mouse sobre cada coluna para entender os indicadores e clique em uma ação para simular.
     """, unsafe_allow_html=True)
-    agent = RendyFinanceAgent()
-    oportunidades = agent.descobrir_oportunidades()
+    try:
+        oportunidades = agent.descobrir_oportunidades()
+    except Exception as e:
+        st.error("Erro ao carregar ranking: " + str(e))
+        return
     if not oportunidades:
         st.error("Não foi possível carregar o ranking agora. Tente novamente.")
         return
@@ -269,7 +298,7 @@ def aba_ranking():
     st.info("A coluna 'Super Investimento' marca ações excepcionais com 🔥, segundo critérios do algoritmo. Veja a explicação completa no glossário abaixo.")
     render_explicacao_campos()
 
-def aba_carteira():
+def aba_carteira(agent):
     st.header("💼 Monte sua Carteira de Renda Passiva")
     st.markdown("""
     <b>Objetivo:</b> Aqui você pode montar sua carteira de ações escolhidas, distribuir seu capital e ver a projeção de renda passiva total.
@@ -282,7 +311,6 @@ def aba_carteira():
         st.session_state['carteira_em_montagem'] = []
     
     # --- NOVO BLOCO: Sugestão Rendy ---
-    agent = RendyFinanceAgent()
     with st.expander("💡 Sugestão do Assistente Rendy: Top 10 Dividendos"):
         st.markdown("Essas são as 10 ações com maiores yields de dividendos agora, selecionadas automaticamente pelo Rendy.")
         oportunidades = agent.descobrir_oportunidades()
@@ -319,7 +347,6 @@ def aba_carteira():
         st.session_state['lista_alocada'] = alocacoes
 
     if st.session_state.get('lista_alocada'):
-        agent = RendyFinanceAgent()
         total_investido = sum(a['valor_alocado'] for a in st.session_state['lista_alocada'])
         renda_total = 0
         linhas = []
@@ -335,7 +362,8 @@ def aba_carteira():
                 "Valor Investido": f"R$ {item['valor_alocado']:,.2f}",
                 "DY": f"{dy*100:.2f}%",
                 "Renda Passiva": f"R$ {renda:,.2f}",
-                "Super Investimento": "🔥" if analise.get('super_investimento') else ""
+                "Super Investimento": "🔥" if analise.get('super_investimento') else "",
+                "Explicação": agent.explicacao_score(analise)
             })
         st.subheader("Resumo da Carteira")
         st.dataframe(pd.DataFrame(linhas), hide_index=True, use_container_width=True)
@@ -344,6 +372,7 @@ def aba_carteira():
             st.info(f"Dividend Yield médio da carteira: {renda_total / total_investido * 100:.2f}%")
         if any(linha["Super Investimento"] for linha in linhas):
             st.markdown(tooltip(GLOSSARIO["Super Investimento"]), unsafe_allow_html=True)
+        st.info("Coluna 'Explicação' mostra o motivo principal de cada pontuação no score!")
         render_explicacao_campos()
 
 def aba_sobre():
@@ -360,14 +389,36 @@ def aba_sobre():
     for k, v in GLOSSARIO.items():
         st.markdown(f"- **{k}**: {v}")
 
+    st.subheader("Política de Privacidade", anchor="politica-de-privacidade")
+    st.markdown(
+        """
+        - Nenhum dado pessoal é enviado a servidores externos ou terceiros.
+        - Todos os dados são armazenados apenas localmente no seu dispositivo.
+        - Você pode apagar todos os dados salvos a qualquer momento pelo menu.
+        - Dúvidas? Entre em contato pelo repositório do projeto.
+        """
+    )
+
+def mini_onboarding():
+    with st.expander("👋 Novo por aqui? Veja como funciona!", expanded=False):
+        st.markdown("""
+        1. Cadastre seu nome e e-mail para uma experiência personalizada.
+        2. Simule investimentos e veja explicações didáticas.
+        3. Monte sua carteira e acompanhe o potencial de renda passiva.
+        4. Todos os dados ficam só com você!
+        """)
+
 # =================== MAIN ===================
 def main():
     inicializar_sessao()
+    agent = RendyFinanceAgent()
     st.title("🤖 Rendy AI - Assessor de Investimentos")
     st.markdown(
         "<span style='color:#666;'>Navegue pelas abas abaixo para simular, aprender e investir com inteligência. O app vai te orientar em cada passo!</span>",
         unsafe_allow_html=True
     )
+    mini_onboarding()
+    aviso_privacidade()
 
     # Cadastro rápido se necessário
     if not st.session_state['nome_usuario']:
@@ -385,16 +436,26 @@ def main():
                 st.rerun()
         return
 
+    with st.sidebar:
+        st.markdown("## 👤 Usuário")
+        st.write(f"Bem-vindo, **{st.session_state['nome_usuario']}**!")
+        if st.button("Limpar meus dados e sair", type="secondary"):
+            limpar_usuario()
+        st.markdown("---")
+        st.markdown("- [Repositório GitHub](https://github.com/MarckDigital/RendyAi-App)")
+        st.markdown("- [Política de Privacidade](#politica-de-privacidade)")
+
     tabs = st.tabs([
         "🏆 Ranking de Mercado",
         "🎯 Simulação Personalizada",
         "💼 Montar Carteira",
         "ℹ️ Sobre & Glossário"
     ])
-    with tabs[0]: aba_ranking()
-    with tabs[1]: aba_simulacao()
-    with tabs[2]: aba_carteira()
+    with tabs[0]: aba_ranking(agent)
+    with tabs[1]: aba_simulacao(agent)
+    with tabs[2]: aba_carteira(agent)
     with tabs[3]: aba_sobre()
 
 if __name__ == "__main__":
     main()
+
