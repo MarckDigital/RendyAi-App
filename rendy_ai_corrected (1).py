@@ -1,110 +1,81 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import time
-import json
 import os
-import logging
+import json
 import re
+import logging
 from datetime import datetime
 from typing import Dict, List
 
-# ============================================================================
-# CONFIGURAÇÕES GERAIS E CONSTANTES
-# ============================================================================
-
-st.set_page_config(
-    page_title="Rendy AI - Sua Jornada de Investimentos",
-    page_icon="🤖",
-    layout="centered"
-)
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# ======================= CONFIGURAÇÕES E CONSTANTES ===========================
+st.set_page_config(page_title="Rendy AI - Sua Jornada de Investimentos", page_icon="🤖", layout="centered")
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DATA_DIR = 'data'
 USUARIO_JSON = os.path.join(DATA_DIR, 'usuario.json')
-
-GLOSSARIO_FINANCEIRO = {
-    "Score": "Uma pontuação de 0 a 10 que avalia o custo/benefício de uma ação para investidores de dividendos. Combina preço justo (P/L, P/VP), rentabilidade (ROE) e dividendos (DY).",
-    "DY": "Dividend Yield. Mede os dividendos pagos nos últimos 12 meses em relação ao preço da ação. É o principal indicador para renda passiva.",
-    "P/L": "Preço sobre Lucro. Indica quanto o mercado paga pelos lucros da empresa. Um P/L baixo pode sugerir que a ação está barata.",
-    "P/VP": "Preço sobre Valor Patrimonial. Compara o preço da ação com o valor patrimonial da empresa. P/VP abaixo de 1 pode indicar que a ação está descontada.",
-    "ROE": "Return on Equity. Mede a capacidade da empresa de gerar lucro. Um ROE alto é um sinal de boa rentabilidade."
+LISTA_TICKERS_IBOV = [
+    'ABEV3.SA', 'B3SA3.SA', 'BBAS3.SA', 'BBDC4.SA', 'BBSE3.SA', 'BRAP4.SA',
+    'BRFS3.SA', 'BRKM5.SA', 'CCRO3.SA', 'CIEL3.SA', 'CMIG4.SA', 'CPLE6.SA',
+    'CSAN3.SA', 'CSNA3.SA', 'CYRE3.SA', 'ECOR3.SA', 'EGIE3.SA', 'ELET3.SA',
+    'EMBR3.SA', 'ENBR3.SA', 'EQTL3.SA', 'GGBR4.SA', 'GOAU4.SA', 'HAPV3.SA',
+    'HYPE3.SA', 'ITSA4.SA', 'ITUB4.SA', 'JBSS3.SA', 'LREN3.SA', 'MGLU3.SA',
+    'MRFG3.SA', 'MRVE3.SA', 'MULT3.SA', 'NTCO3.SA', 'PCAR3.SA', 'PETR3.SA',
+    'PETR4.SA', 'PRIO3.SA', 'RADL3.SA', 'RAIL3.SA', 'RENT3.SA', 'SANB11.SA',
+    'SBSP3.SA', 'SUZB3.SA', 'TAEE11.SA', 'UGPA3.SA', 'USIM5.SA', 'VALE3.SA',
+    'VIVT3.SA', 'WEGE3.SA', 'YDUQ3.SA'
+]
+GLOSSARIO = {
+    "Score": "Pontuação de até 10 que avalia custo/benefício considerando dividendos (DY), rentabilidade (ROE), preço/lucro (P/L) e preço/valor patrimonial (P/VP). Quanto mais perto de 10, melhor.",
+    "DY": "Dividend Yield: percentual dos dividendos pagos em relação ao preço da ação, anualizado.",
+    "P/L": "Preço dividido pelo lucro por ação. P/L baixo pode indicar ação barata.",
+    "P/VP": "Preço dividido pelo valor patrimonial da empresa por ação. P/VP abaixo de 1 pode indicar ação descontada.",
+    "ROE": "Retorno sobre o patrimônio líquido. Mede a eficiência da empresa em gerar lucros.",
 }
 
-LISTA_TICKERS_IBOV_SIMPLIFICADA = [
-    "ITSA4.SA", "PETR4.SA", "VALE3.SA", "BBAS3.SA", "BBDC4.SA", 
-    "TAEE11.SA", "EGIE3.SA", "BBSE3.SA", "TRPL4.SA", "CPLE6.SA", 
-    "CMIG4.SA", "SANB11.SA"
-]
-
-# ============================================================================
-# FUNÇÕES DE UTILIDADE (GESTÃO DE DADOS E SESSÃO)
-# ============================================================================
-
+# ========================== UTILITÁRIOS E SESSÃO ==============================
 def inicializar_ambiente():
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR)
 
-def salvar_dados_usuario(dados: Dict):
-    try:
-        inicializar_ambiente()
-        with open(USUARIO_JSON, 'w', encoding='utf-8') as f:
-            json.dump(dados, f, ensure_ascii=False, indent=4)
-        logger.info(f"Dados do usuário salvos em {USUARIO_JSON}")
-    except Exception as e:
-        logger.error(f"Erro ao salvar dados do usuário: {e}")
-        st.error("Erro ao salvar dados do usuário")
+def salvar_usuario(nome: str, email: str):
+    inicializar_ambiente()
+    dados = {'nome': nome, 'email': email, 'data_cadastro': datetime.now().isoformat()}
+    with open(USUARIO_JSON, 'w', encoding='utf-8') as f:
+        json.dump(dados, f, ensure_ascii=False, indent=2)
+    st.session_state['nome_usuario'] = nome
+    st.session_state['email_usuario'] = email
 
-def carregar_dados_usuario() -> Dict:
-    try:
-        if os.path.exists(USUARIO_JSON):
-            with open(USUARIO_JSON, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except Exception as e:
-        logger.error(f"Erro ao carregar dados do usuário: {e}")
+def carregar_usuario():
+    if os.path.exists(USUARIO_JSON):
+        with open(USUARIO_JSON, 'r', encoding='utf-8') as f:
+            return json.load(f)
     return {}
 
+def validar_email(email: str) -> bool:
+    return bool(re.match(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$', email))
+
 def inicializar_sessao():
-    if 'step' not in st.session_state:
-        st.session_state.step = "welcome"
-    if 'dashboard_view' not in st.session_state:
-        st.session_state.dashboard_view = 'simulacao'
-    if 'carteira_em_montagem' not in st.session_state:
-        st.session_state.carteira_em_montagem = []
-    if 'carteira_salva' not in st.session_state:
-        st.session_state.carteira_salva = carregar_dados_usuario().get('carteira_salva', [])
     if 'nome_usuario' not in st.session_state:
-        st.session_state.nome_usuario = ""
-    if 'analise_cache' not in st.session_state:
-        st.session_state.analise_cache = None
-    if 'valor_a_investir_simulacao' not in st.session_state:
-        st.session_state.valor_a_investir_simulacao = 10000.0
-    if 'carteira_alocada' not in st.session_state:
-        st.session_state.carteira_alocada = []
+        user = carregar_usuario()
+        st.session_state['nome_usuario'] = user.get('nome', '')
+        st.session_state['email_usuario'] = user.get('email', '')
+    if 'carteira_em_montagem' not in st.session_state:
+        st.session_state['carteira_em_montagem'] = []
+    if 'valor_simulacao' not in st.session_state:
+        st.session_state['valor_simulacao'] = 5000.0
+    if 'analise_simulacao' not in st.session_state:
+        st.session_state['analise_simulacao'] = None
 
-# ============================================================================
-# CLASSES DOS AGENTES DE IA
-# ============================================================================
-
-class RendyInvestAgent:
-    def obter_perfil_usuario(self) -> Dict:
-        user_data = carregar_dados_usuario()
-        valor_definido_na_ui = st.session_state.get('valor_a_investir_simulacao', 10000.0)
-        return {
-            'nome': user_data.get('nome', 'Investidor(a)'),
-            'email': user_data.get('email', ''),
-            'valor_total_disponivel': valor_definido_na_ui
-        }
+# ===================== AGENTES E ANÁLISE DE AÇÕES =============================
 
 class RendyFinanceAgent:
     def analisar_ativo(self, ticker: str) -> Dict:
         try:
-            logger.info(f"Analisando ticker: {ticker}")
-            ticker_obj = yf.Ticker(ticker)
-            info = ticker_obj.info
-            historico = ticker_obj.history(period="1y")
+            acao = yf.Ticker(ticker)
+            info = acao.info
+            historico = acao.history(period="1y")
             historico_close = historico['Close'] if not historico.empty else None
             dy = info.get('dividendYield', 0) or 0
             pl = info.get('trailingPE', 0) or 0
@@ -113,6 +84,7 @@ class RendyFinanceAgent:
             preco_atual = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
             if preco_atual == 0 and historico_close is not None and hasattr(historico_close, 'iloc') and not historico_close.empty:
                 preco_atual = float(historico_close.iloc[-1])
+            # Score ponderado e explicativo
             score_dy = min(dy / 0.08, 1) * 4 if dy > 0 else 0
             score_pl = min(15 / pl if pl > 0 else 0, 1) * 1.5
             score_pvp = min(2 / pvp if pvp > 0 else 0, 1) * 1.5
@@ -120,8 +92,7 @@ class RendyFinanceAgent:
             score_total = min(score_dy + score_pl + score_pvp + score_roe, 10)
             return {
                 "ticker": ticker,
-                "nome_empresa": info.get('longName', 'N/A'),
-                "setor": info.get('sector', 'N/A'),
+                "nome_empresa": info.get('longName', ticker),
                 "preco_atual": preco_atual,
                 "dy": float(dy),
                 "pl": float(pl),
@@ -131,230 +102,220 @@ class RendyFinanceAgent:
                 "historico": historico_close
             }
         except Exception as e:
-            logger.error(f"Erro ao analisar o ticker {ticker}: {e}")
+            logger.error(f"Erro ao analisar {ticker}: {e}")
             return {"ticker": ticker, "error": str(e)}
 
-class RendyXaiAgent:
-    def apresentar_relatorio_visual(self, analise: Dict, perfil: Dict):
-        if analise.get("error"):
-            st.error(f"Não foi possível obter os dados para {analise['ticker']}. Tente outro ativo.")
-            return
-        dy_val = float(analise['dy']) if analise['dy'] is not None else 0.0
-        if dy_val > 0:
-            dy_text = f"{dy_val * 100:.2f}%"
-            dy_help = GLOSSARIO_FINANCEIRO['DY']
-        else:
-            dy_text = "Não Paga"
-            dy_help = "Esta empresa não distribuiu dividendos recentemente."
-        pl_text = f"{analise['pl']:.2f}" if analise['pl'] > 0 else "N/A (Prejuízo)"
-        st.subheader(f"Análise para {analise['nome_empresa']} ({analise['ticker']})")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Score Rendy AI", f"{analise['score']:.1f}/10", help=GLOSSARIO_FINANCEIRO['Score'])
-        col2.metric("Dividend Yield", dy_text, help=dy_help)
-        col3.metric("Preço/Lucro (P/L)", pl_text, help=GLOSSARIO_FINANCEIRO['P/L'])
-        col4.metric("Preço da Ação", f"R$ {analise['preco_atual']:.2f}")
-        valor_simulado = perfil['valor_total_disponivel']
-        if analise['preco_atual'] > 0:
-            qtd_acoes = int(valor_simulado / analise['preco_atual'])
-            ganho_anual_projetado = valor_simulado * dy_val
-            st.success(
-                f"Com **R$ {valor_simulado:,.2f}**, você poderia comprar **{qtd_acoes}** "
-                f"ações e ter uma projeção de renda passiva de **R$ {ganho_anual_projetado:,.2f}** no próximo ano."
-            )
-        else:
-            st.warning("Não foi possível calcular a simulação devido ao preço indisponível.")
-        st.subheader("Desempenho da Ação no Último Ano")
-        historico = analise.get('historico')
-        if historico is not None and hasattr(historico, "empty") and not historico.empty:
-            st.line_chart(historico, use_container_width=True)
-        else:
-            st.warning("Não foi possível carregar o histórico de cotações para este ativo.")
-        with st.expander("🆚 Comparar com outro ativo"):
-            lista_comparacao = [t for t in LISTA_TICKERS_IBOV_SIMPLIFICADA if t != analise['ticker']]
-            ticker_comparacao = st.selectbox(
-                "Selecione um ativo para comparar:",
-                options=lista_comparacao,
-                key=f"comp_{analise['ticker']}"
-            )
-            if ticker_comparacao:
-                finance_agent_comp = RendyFinanceAgent()
-                analise_comp = finance_agent_comp.analisar_ativo(ticker_comparacao)
-                if not analise_comp.get("error"):
-                    st.write(f"Comparando **{analise['ticker']}** vs **{analise_comp['ticker']}**")
-                    dados_tabela = {
-                        'Métrica': ['Score', 'Div. Yield', 'P/L', 'ROE', 'Preço'],
-                        analise['ticker']: [
-                            f"{analise['score']:.1f}/10",
-                            f"{analise['dy']*100:.2f}%",
-                            f"{analise['pl']:.2f}" if analise['pl'] > 0 else "N/A",
-                            f"{analise['roe']*100:.2f}%",
-                            f"R$ {analise['preco_atual']:.2f}"
-                        ],
-                        analise_comp['ticker']: [
-                            f"{analise_comp['score']:.1f}/10",
-                            f"{analise_comp['dy']*100:.2f}%",
-                            f"{analise_comp['pl']:.2f}" if analise_comp['pl'] > 0 else "N/A",
-                            f"{analise_comp['roe']*100:.2f}%",
-                            f"R$ {analise_comp['preco_atual']:.2f}"
-                        ]
-                    }
-                    df_comp = pd.DataFrame(dados_tabela)
-                    st.dataframe(df_comp, use_container_width=True, hide_index=True)
-                else:
-                    st.error(f"Não foi possível carregar dados para {ticker_comparacao}")
-        st.divider()
-        if analise['ticker'] not in [item['ticker'] for item in st.session_state.carteira_em_montagem]:
-            if len(st.session_state.carteira_em_montagem) < 10:
-                if st.button("➕ Adicionar à Minha Carteira", key=f"add_{analise['ticker']}"):
-                    st.session_state.carteira_em_montagem.append({'ticker': analise['ticker']})
-                    st.toast(f"{analise['ticker']} adicionado com sucesso!", icon="✅")
-                    st.rerun()
-            else:
-                st.warning("Você atingiu o limite de 10 ações na sua carteira em montagem.")
-        else:
-            st.info("Esta ação já está na sua carteira em montagem.")
+    def descobrir_oportunidades(self) -> List[Dict]:
+        resultados = []
+        progress_bar = st.progress(0, "Rendy está analisando todo o mercado para você!")
+        for i, ticker in enumerate(LISTA_TICKERS_IBOV):
+            resultado = self.analisar_ativo(ticker)
+            if 'error' not in resultado and resultado.get('preco_atual', 0) > 0:
+                resultados.append(resultado)
+            progress = min((i + 1) / len(LISTA_TICKERS_IBOV), 1.0)
+            progress_bar.progress(progress, f"Pesquisando {ticker}...")
+        progress_bar.empty()
+        return sorted(resultados, key=lambda x: x.get('score', 0), reverse=True)
 
-    def analisar_carteira_completa(self, carteira_alocada: List[Dict], finance_agent: RendyFinanceAgent) -> Dict:
-        total_investido = 0
-        renda_passiva_anual_total = 0
-        for item in carteira_alocada:
-            valor_alocado = item.get('valor_alocado', 0)
-            if valor_alocado > 0:
-                analise = finance_agent.analisar_ativo(item['ticker'])
-                if not analise.get("error"):
-                    dy = float(analise['dy']) if analise['dy'] is not None else 0.0
-                    total_investido += valor_alocado
-                    renda_passiva_anual_total += valor_alocado * dy
-        dy_medio_ponderado = (renda_passiva_anual_total / total_investido) if total_investido > 0 else 0
-        return {
-            "total_investido": total_investido,
-            "renda_passiva_anual_total": renda_passiva_anual_total,
-            "dy_medio_ponderado": dy_medio_ponderado
-        }
+# ============================ UI EXPLICATIVA ==================================
 
-# ============================================================================
-# TELAS DA APLICAÇÃO
-# ============================================================================
+def tooltip(texto):
+    return f"ℹ️ <span style='color:gray;font-size:0.95em'>{texto}</span>"
 
-def tela_dashboard():
-    st.title(f"Olá, {st.session_state.nome_usuario}! 👋")
-    st.header("Passo 1: Simule seu Investimento")
-    st.markdown("Descubra o potencial de uma ação. Selecione um ativo, defina o valor e veja uma projeção clara dos seus ganhos.")
-    col1, col2 = st.columns([2, 1])
+def render_explicacao_campos():
+    st.markdown("#### O que significa cada indicador?")
+    for key, desc in GLOSSARIO.items():
+        st.markdown(f"- **{key}**: {desc}")
+
+# ============================== ABAS ==========================================
+
+def aba_simulacao():
+    st.header("🎯 Simulação Personalizada de Investimento")
+    st.markdown("""
+    Bem-vindo à área principal do Rendy! Aqui você simula um investimento REAL, escolhendo uma ação e um valor para investir.  
+    <br>
+    <b>O objetivo:</b> Te mostrar, de forma didática, quanto de renda passiva anual você pode conquistar e como cada métrica impacta sua decisão!
+    """, unsafe_allow_html=True)
+    st.info("**Dica do Rendy:** Use esse simulador quantas vezes quiser para experimentar diferentes valores e ações! Clique nos (i) para entender cada campo.")
+
+    col1, col2 = st.columns(2)
     with col1:
-        ticker_selecionado = st.selectbox("Selecione um ativo:", LISTA_TICKERS_IBOV_SIMPLIFICADA)
+        ticker = st.selectbox("Escolha uma ação para simular", options=LISTA_TICKERS_IBOV,
+                              help="Selecione uma empresa da bolsa para a simulação.")
     with col2:
-        st.session_state.valor_a_investir_simulacao = st.number_input(
-            "Valor para simular (R$):",
-            min_value=100.0,
-            value=st.session_state.valor_a_investir_simulacao,
-            step=100.0
+        st.session_state['valor_simulacao'] = st.number_input(
+            "Quanto deseja investir? (R$)",
+            min_value=100.0, step=100.0, value=st.session_state['valor_simulacao'],
+            help="Digite o valor que pretende investir nesta simulação."
         )
-    if st.button("📊 Gerar Simulação", use_container_width=True, type="primary"):
-        invest_agent = RendyInvestAgent()
-        finance_agent = RendyFinanceAgent()
-        with st.spinner(f"Analisando {ticker_selecionado}..."):
-            perfil = invest_agent.obter_perfil_usuario()
-            analise = finance_agent.analisar_ativo(ticker_selecionado)
-            st.session_state.analise_cache = (analise, perfil)
-    if st.session_state.get('analise_cache'):
-        analise, perfil = st.session_state.analise_cache
-        xai_agent = RendyXaiAgent()
-        xai_agent.apresentar_relatorio_visual(analise, perfil)
-    st.divider()
-    if st.session_state.carteira_em_montagem:
-        st.header("Passo 2: Monte sua Carteira de Renda Passiva")
-        st.markdown("Revise sua lista de ações pré-selecionadas e avance para definir a alocação de recursos.")
-        for i, item in enumerate(st.session_state.carteira_em_montagem):
-            col1, col2 = st.columns([4, 1])
-            col1.info(f"**{i+1}. {item['ticker']}**")
-            if col2.button("❌ Remover", key=f"remove_{item['ticker']}", use_container_width=True):
-                st.session_state.carteira_em_montagem.pop(i)
-                st.rerun()
-        if st.button("Definir Alocação de Recursos ➔", use_container_width=True):
-            st.session_state.dashboard_view = 'alocacao'
-            st.rerun()
-    if st.session_state.dashboard_view == 'alocacao':
-        st.header("Passo 3: Defina sua Alocação")
-        st.markdown("Distribua o seu capital entre as ações escolhidas.")
-        with st.form("alocacao_form"):
-            alocacoes = []
-            for item in st.session_state.carteira_em_montagem:
-                valor_alocado = st.number_input(
-                    f"Valor para **{item['ticker']}** (R$)",
-                    min_value=0.0,
-                    key=f"aloc_{item['ticker']}"
-                )
-                alocacoes.append({'ticker': item['ticker'], 'valor_alocado': valor_alocado})
-            if st.form_submit_button("✔ Analisar Minha Carteira Completa"):
-                total_alocado = sum(item['valor_alocado'] for item in alocacoes)
-                valor_disponivel = RendyInvestAgent().obter_perfil_usuario()['valor_total_disponivel']
-                if total_alocado > valor_disponivel:
-                    st.error(f"O valor total alocado (R$ {total_alocado:,.2f}) não pode exceder o seu valor de simulação (R$ {valor_disponivel:,.2f}).")
-                else:
-                    st.session_state.carteira_alocada = alocacoes
-                    st.session_state.dashboard_view = 'resumo'
-                    st.rerun()
-    if st.session_state.dashboard_view == 'resumo':
-        st.header("Resumo do Seu Plano de Investimentos")
-        finance_agent = RendyFinanceAgent()
-        xai_agent = RendyXaiAgent()
-        with st.spinner("Calculando o potencial da sua carteira..."):
-            resumo_carteira = xai_agent.analisar_carteira_completa(st.session_state.get('carteira_alocada', []), finance_agent)
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Investido", f"R$ {resumo_carteira['total_investido']:,.2f}")
-        col2.metric("Renda Anual Estimada", f"R$ {resumo_carteira['renda_passiva_anual_total']:,.2f}")
-        col3.metric("Dividend Yield Médio", f"{resumo_carteira['dy_medio_ponderado'] * 100:.2f}%")
-        st.info("Este é o potencial da sua carteira com base nos dados atuais. Lembre-se que o mercado é volátil.")
-        if st.button("Confirmar e Salvar Plano", type="primary", use_container_width=True):
-            dados_usuario = carregar_dados_usuario()
-            dados_usuario['carteira_salva'] = st.session_state.get('carteira_alocada', [])
-            salvar_dados_usuario(dados_usuario)
-            st.session_state.carteira_salva = st.session_state.get('carteira_alocada', [])
-            st.session_state.carteira_em_montagem = []
-            st.session_state.dashboard_view = 'simulacao'
-            st.session_state.analise_cache = None
-            st.success("Seu plano de investimentos foi salvo com sucesso!")
-            st.balloons()
-            st.rerun()
 
-def tela_welcome():
-    st.title("Bem-vindo(a) ao Rendy AI 🤖")
-    st.markdown("Faça seu login ou cadastro para acessar seu dashboard.")
-    nome = st.text_input("Seu nome:")
-    email = st.text_input("Seu email:")
-    if st.button("Acessar Dashboard", type="primary"):
-        if nome and email:
-            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-            if not re.match(email_pattern, email):
-                st.error("Por favor, insira um email válido.")
-                return
-            salvar_dados_usuario({'nome': nome, 'email': email, 'carteira_salva': []})
-            st.session_state.step = 'dashboard'
-            st.session_state.nome_usuario = nome.split(' ')[0]
-            st.rerun()
+    if st.button("Simular meu investimento 🚀", type="primary", use_container_width=True):
+        agent = RendyFinanceAgent()
+        with st.spinner("Rendy está analisando sua simulação..."):
+            st.session_state['analise_simulacao'] = agent.analisar_ativo(ticker)
+
+    if st.session_state.get('analise_simulacao'):
+        analise = st.session_state['analise_simulacao']
+        if analise.get("error"):
+            st.error(f"Erro ao analisar: {analise['error']}")
         else:
-            st.error("Por favor, preencha nome e email.")
+            st.subheader(f"Resultado para {analise['nome_empresa']} ({analise['ticker']})")
+            valor = st.session_state['valor_simulacao']
+            preco = analise["preco_atual"]
+            dy = analise["dy"]
+            roe = analise["roe"]
+            qtd = int(valor // preco) if preco > 0 else 0
+            investido = qtd * preco
+            renda = investido * dy
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Score", f"{analise['score']:.1f}/10", help=GLOSSARIO["Score"])
+            col2.metric("Div. Yield", f"{dy*100:.2f}%", help=GLOSSARIO["DY"])
+            col3.metric("P/L", f"{analise['pl']:.2f}", help=GLOSSARIO["P/L"])
+            col4.metric("ROE", f"{roe*100:.2f}%", help=GLOSSARIO["ROE"])
+            st.success(
+                f"Com **R$ {valor:,.2f}** você compraria **{qtd} ações** e teria uma renda passiva anual estimada de **R$ {renda:,.2f}**."
+            )
+            if analise.get('historico') is not None and hasattr(analise['historico'], 'empty') and not analise['historico'].empty:
+                st.markdown("##### Evolução do Preço nos Últimos 12 Meses")
+                st.line_chart(analise['historico'])
+            render_explicacao_campos()
 
-# ============================================================================
-# FLUXO PRINCIPAL DA APLICAÇÃO
-# ============================================================================
+def aba_ranking():
+    st.header("🏆 Ranking de Oportunidades do Mercado")
+    st.markdown("""
+    Aqui você encontra as melhores oportunidades do momento, segundo o algoritmo do Rendy!
+    <br>
+    <b>Como interpretar?</b> O Score combina potencial de dividendos, valorização e preço justo.
+    <br>
+    <i>Dica do Rendy:</i> Passe o mouse sobre cada coluna para entender os indicadores e clique em uma ação para simular.
+    """, unsafe_allow_html=True)
+    agent = RendyFinanceAgent()
+    oportunidades = agent.descobrir_oportunidades()
+    if not oportunidades:
+        st.error("Não foi possível carregar o ranking agora. Tente novamente.")
+        return
+    df = pd.DataFrame(oportunidades)
+    df['Div. Yield'] = df['dy'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
+    df['P/L'] = df['pl'].apply(lambda x: f"{x:.2f}" if x > 0 else "N/A")
+    df['ROE'] = df['roe'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
+    st.dataframe(
+        df[['ticker', 'nome_empresa', 'score', 'Div. Yield', 'P/L', 'ROE']].rename(
+            columns={'ticker':'Ticker', 'nome_empresa':'Empresa', 'score':'Score'}),
+        hide_index=True, use_container_width=True,
+        column_config={"Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=10, format="%.1f")}
+    )
+    render_explicacao_campos()
+
+def aba_carteira():
+    st.header("💼 Monte sua Carteira de Renda Passiva")
+    st.markdown("""
+    <b>Objetivo:</b> Aqui você pode montar sua carteira de ações escolhidas, distribuir seu capital e ver a projeção de renda passiva total.
+    <br>
+    <i>Dica do Rendy:</i> Selecione várias ações, defina quanto investir em cada uma e veja o resultado combinado!
+    """, unsafe_allow_html=True)
+    if 'lista_alocada' not in st.session_state:
+        st.session_state['lista_alocada'] = []
+    # Seleção de ações
+    tickers_add = st.multiselect(
+        "Selecione as ações para sua carteira:",
+        LISTA_TICKERS_IBOV,
+        default=[a['ticker'] for a in st.session_state['carteira_em_montagem']]
+    )
+    if st.button("Adicionar à Carteira", use_container_width=True):
+        st.session_state['carteira_em_montagem'] = [{'ticker': t} for t in tickers_add]
+        st.success("Ações adicionadas! Agora defina a alocação para cada uma.")
+
+    # Alocação de valores
+    total = 0
+    alocacoes = []
+    st.markdown(tooltip("Defina quanto deseja investir em cada ação. Rendy recomenda diversificação para diminuir riscos!"), unsafe_allow_html=True)
+    for item in st.session_state['carteira_em_montagem']:
+        val = st.number_input(
+            f"Valor para {item['ticker']}:",
+            min_value=0.0,
+            key=f"aloc_{item['ticker']}"
+        )
+        alocacoes.append({'ticker': item['ticker'], 'valor_alocado': val})
+        total += val
+
+    if st.button("Analisar Carteira", type="primary", use_container_width=True):
+        st.session_state['lista_alocada'] = alocacoes
+
+    if st.session_state.get('lista_alocada'):
+        agent = RendyFinanceAgent()
+        total_investido = sum(a['valor_alocado'] for a in st.session_state['lista_alocada'])
+        renda_total = 0
+        linhas = []
+        for item in st.session_state['lista_alocada']:
+            analise = agent.analisar_ativo(item['ticker'])
+            dy = float(analise['dy']) if analise.get('dy') else 0.0
+            renda = item['valor_alocado'] * dy
+            renda_total += renda
+            linhas.append({
+                "Ticker": item['ticker'],
+                "Valor Investido": f"R$ {item['valor_alocado']:,.2f}",
+                "DY": f"{dy*100:.2f}%",
+                "Renda Passiva": f"R$ {renda:,.2f}"
+            })
+        st.subheader("Resumo da Carteira")
+        st.dataframe(pd.DataFrame(linhas), hide_index=True, use_container_width=True)
+        st.success(f"Total investido: R$ {total_investido:,.2f} | Renda passiva anual estimada: R$ {renda_total:,.2f}")
+        if total_investido > 0:
+            st.info(f"Dividend Yield médio da carteira: {renda_total / total_investido * 100:.2f}%")
+        render_explicacao_campos()
+
+def aba_sobre():
+    st.header("👋 Sobre o Rendy AI & Glossário")
+    st.markdown("""
+    Olá, eu sou o Rendy! Seu anfitrião virtual para investimentos inteligentes e didáticos 👨‍💼🤖  
+    <br>
+    <b>Minhas funções:</b>
+    - Explicar indicadores de investimento de modo simples e prático
+    - Simular oportunidades para você experimentar antes de investir
+    - Ajudar a montar sua carteira de renda passiva
+    - Ensinar como analisar as melhores oportunidades do mercado
+    <br>
+    <b>Glossário:</b>
+    """, unsafe_allow_html=True)
+    for k, v in GLOSSARIO.items():
+        st.markdown(f"- **{k}**: {v}")
+
+# ================================ MAIN ========================================
 
 def main():
-    try:
-        inicializar_sessao()
-        if os.path.exists(USUARIO_JSON) and (not st.session_state.nome_usuario):
-            user_data = carregar_dados_usuario()
-            if user_data and user_data.get('nome'):
-                st.session_state.step = 'dashboard'
-                st.session_state.nome_usuario = user_data.get('nome', '').split(' ')[0]
-        if st.session_state.step == "dashboard":
-            tela_dashboard()
-        else:
-            tela_welcome()
-    except Exception as e:
-        logger.error(f"Ocorreu um erro inesperado na aplicação: {e}")
-        st.error("Ocorreu um erro inesperado. Por favor, recarregue a página.")
+    inicializar_sessao()
+    st.title("🤖 Rendy AI - Seu anfitrião e assessor de investimentos")
+    st.markdown(
+        "<span style='color:#666;'>Navegue pelas abas abaixo para simular, aprender e investir com inteligência. Rendy vai te orientar em cada passo!</span>",
+        unsafe_allow_html=True
+    )
+
+    # Cadastro rápido se necessário
+    if not st.session_state['nome_usuario']:
+        with st.form("cadastro"):
+            st.subheader("Primeiro, cadastre-se para uma experiência personalizada!")
+            nome = st.text_input("Seu nome")
+            email = st.text_input("Seu melhor email")
+            submitted = st.form_submit_button("Entrar no Rendy AI")
+            if submitted:
+                if not nome.strip() or not validar_email(email):
+                    st.error("Por favor, preencha nome e email válidos!")
+                    return
+                salvar_usuario(nome.strip(), email.strip())
+                st.success(f"Bem-vindo, {nome.split()[0]}! Agora navegue nas abas.")
+                st.experimental_rerun()
+        return
+
+    tabs = st.tabs([
+        "🎯 Simulação Personalizada",
+        "🏆 Ranking de Mercado",
+        "💼 Montar Carteira",
+        "ℹ️ Sobre & Glossário"
+    ])
+    with tabs[0]: aba_simulacao()
+    with tabs[1]: aba_ranking()
+    with tabs[2]: aba_carteira()
+    with tabs[3]: aba_sobre()
 
 if __name__ == "__main__":
     main()
