@@ -9,428 +9,441 @@ from datetime import datetime
 import logging
 import re
 
-# ==============================================================================
+# ============================================================================
 # CONFIGURAÇÕES GERAIS E CONSTANTES
-# ==============================================================================
+# ============================================================================
 
 st.set_page_config(
-    page_title="Rendy AI - Assessor de Investimentos",
+    page_title="Rendy AI - Sua Jornada de Investimentos",
     page_icon="🤖",
     layout="centered"
 )
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 DATA_DIR = 'data'
 USUARIO_JSON = os.path.join(DATA_DIR, 'usuario.json')
-TICKERS_IBOV = [
-    'ABEV3.SA', 'B3SA3.SA', 'BBAS3.SA', 'BBDC4.SA', 'BBSE3.SA', 'BRAP4.SA',
-    'BRFS3.SA', 'BRKM5.SA', 'CCRO3.SA', 'CIEL3.SA', 'CMIG4.SA', 'CPLE6.SA',
-    'CSAN3.SA', 'CSNA3.SA', 'CYRE3.SA', 'ECOR3.SA', 'EGIE3.SA', 'ELET3.SA',
-    'EMBR3.SA', 'ENBR3.SA', 'EQTL3.SA', 'GGBR4.SA', 'GOAU4.SA', 'HAPV3.SA',
-    'HYPE3.SA', 'ITSA4.SA', 'ITUB4.SA', 'JBSS3.SA', 'LREN3.SA',
-    'MGLU3.SA', 'MRFG3.SA', 'MRVE3.SA', 'MULT3.SA', 'NTCO3.SA', 'PCAR3.SA',
-    'PETR3.SA', 'PETR4.SA', 'PRIO3.SA', 'RADL3.SA', 'RAIL3.SA', 'RENT3.SA',
-    'SANB11.SA', 'SBSP3.SA', 'SUZB3.SA', 'TAEE11.SA', 'UGPA3.SA', 'USIM5.SA',
-    'VALE3.SA', 'VIVT3.SA', 'WEGE3.SA', 'YDUQ3.SA'
+
+# Glossário financeiro
+GLOSSARIO_FINANCEIRO = {
+    "Score": "Uma pontuação de 0 a 10 que avalia o custo/benefício de uma ação para investidores de dividendos. Combina preço justo (P/L, P/VP), rentabilidade (ROE) e dividendos (DY).",
+    "DY": "Dividend Yield. Mede os dividendos pagos nos últimos 12 meses em relação ao preço da ação. É o principal indicador para renda passiva.",
+    "P/L": "Preço sobre Lucro. Indica quanto o mercado paga pelos lucros da empresa. Um P/L baixo pode sugerir que a ação está barata.",
+    "P/VP": "Preço sobre Valor Patrimonial. Compara o preço da ação com o valor patrimonial da empresa. P/VP abaixo de 1 pode indicar que a ação está descontada.",
+    "ROE": "Return on Equity. Mede a capacidade da empresa de gerar lucro. Um ROE alto é um sinal de boa rentabilidade."
+}
+
+LISTA_TICKERS_IBOV_SIMPLIFICADA = [
+    "ITSA4.SA", "PETR4.SA", "VALE3.SA", "BBAS3.SA", "BBDC4.SA", 
+    "TAEE11.SA", "EGIE3.SA", "BBSE3.SA", "TRPL4.SA", "CPLE6.SA", 
+    "CMIG4.SA", "SANB11.SA"
 ]
 
-# ==============================================================================
-# UTILITÁRIOS DE PERSISTÊNCIA E VALIDAÇÃO
-# ==============================================================================
+# ============================================================================
+# FUNÇÕES DE UTILIDADE (GESTÃO DE DADOS E SESSÃO)
+# ============================================================================
 
-def salvar_usuario(nome: str, email: str) -> bool:
+def inicializar_ambiente():
+    """Cria o diretório de dados se não existir"""
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+
+def salvar_dados_usuario(dados: Dict):
+    """Salva os dados do usuário em arquivo JSON"""
     try:
-        if not nome or not email:
-            return False
-        if not os.path.exists(DATA_DIR):
-            os.makedirs(DATA_DIR)
-        usuario_data = {
-            'nome': nome.strip(),
-            'email': email.strip().lower(),
-            'data_cadastro': datetime.now().isoformat(),
-            'perfil_risco': 'Moderado',
-            'objetivo_principal': 'Aumentar Renda Passiva'
-        }
+        inicializar_ambiente()
         with open(USUARIO_JSON, 'w', encoding='utf-8') as f:
-            json.dump(usuario_data, f, ensure_ascii=False, indent=2)
-        logger.info(f"Usuário {nome} salvo com sucesso")
-        return True
+            json.dump(dados, f, ensure_ascii=False, indent=4)
+        logger.info(f"Dados do usuário salvos em {USUARIO_JSON}")
     except Exception as e:
         logger.error(f"Erro ao salvar dados do usuário: {e}")
-        return False
+        st.error("Erro ao salvar dados do usuário")
 
-def carregar_usuario() -> Optional[Dict]:
+def carregar_dados_usuario() -> Dict:
+    """Carrega os dados do usuário do arquivo JSON"""
     try:
         if os.path.exists(USUARIO_JSON):
             with open(USUARIO_JSON, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        return None
     except Exception as e:
         logger.error(f"Erro ao carregar dados do usuário: {e}")
-        return None
-
-def validar_email(email: str) -> bool:
-    if not email:
-        return False
-    return re.match(r"^[\w\.-]+@[\w\.-]+\.\w{2,}$", email) is not None
-
-# ==============================================================================
-# NAVEGAÇÃO E SESSÃO
-# ==============================================================================
+    return {}
 
 def inicializar_sessao():
+    """Inicializa as variáveis de sessão"""
     if 'step' not in st.session_state:
-        usuario_existente = carregar_usuario()
-        if usuario_existente:
-            st.session_state.step = "main_app"
-            st.session_state.user_name = usuario_existente['nome']
-            st.session_state.user_email = usuario_existente['email']
-        else:
-            st.session_state.step = "welcome"
+        st.session_state.step = "welcome"
+    if 'dashboard_view' not in st.session_state:
+        st.session_state.dashboard_view = 'simulacao'
+    if 'carteira_em_montagem' not in st.session_state:
+        st.session_state.carteira_em_montagem = []
+    if 'carteira_salva' not in st.session_state:
+        st.session_state.carteira_salva = carregar_dados_usuario().get('carteira_salva', [])
+    if 'nome_usuario' not in st.session_state:
+        st.session_state.nome_usuario = ""
+    if 'analise_cache' not in st.session_state:
+        st.session_state.analise_cache = None
+    if 'valor_a_investir_simulacao' not in st.session_state:
+        st.session_state.valor_a_investir_simulacao = 10000.0
 
-    default_values = {'ver_todos': False, 'valor_investir': 5000.0, 'user_name': '', 'user_email': ''}
-    for key, value in default_values.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-def limpar_sessao_e_cache():
-    if os.path.exists(USUARIO_JSON):
-        os.remove(USUARIO_JSON)
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.cache_data.clear()
-    st.rerun()
-
-# ==============================================================================
-# AGENTES DE INTELIGÊNCIA
-# ==============================================================================
+# ============================================================================
+# CLASSES DOS AGENTES DE IA
+# ============================================================================
 
 class RendyInvestAgent:
+    """Agente responsável por gerenciar o perfil do usuário"""
+    
     def obter_perfil_usuario(self) -> Dict:
-        usuario_data = carregar_usuario()
-        perfil = {
-            'user_id': st.session_state.get('user_email', 'user_123'),
-            'nome': st.session_state.get('user_name', 'Usuário'),
-            'perfil_risco': usuario_data.get('perfil_risco', 'Moderado') if usuario_data else 'Moderado',
-            'objetivo_principal': usuario_data.get('objetivo_principal', 'Aumentar Renda Passiva') if usuario_data else 'Aumentar Renda Passiva',
-            'valor_disponivel': st.session_state.get('valor_investir', 5000.00)
+        """Obtém o perfil do usuário"""
+        user_data = carregar_dados_usuario()
+        valor_definido_na_ui = st.session_state.get('valor_a_investir_simulacao', 10000.0)
+        
+        return {
+            'nome': user_data.get('nome', 'Investidor(a)'),
+            'email': user_data.get('email', ''),
+            'valor_total_disponivel': valor_definido_na_ui
         }
-        return perfil
 
 class RendyFinanceAgent:
-    def _calcular_score_custo_beneficio(self, dados: Dict) -> float:
-        try:
-            score = 0
-            dy = dados.get('dividend_yield', 0)
-            if isinstance(dy, (int, float)) and dy > 0: score += dy * 15
-            roe = dados.get('roe', 0)
-            if isinstance(roe, (int, float)) and roe > 0: score += roe * 10
-            pl = dados.get('p_l', 0)
-            if isinstance(pl, (int, float)) and pl > 0: score += (1 / pl) * 5
-            pvp = dados.get('p_vp', 0)
-            if isinstance(pvp, (int, float)) and pvp > 0: score += (1 / pvp) * 5
-            return round(max(score, 0), 2)
-        except Exception:
-            return 0.0
-
+    """Agente responsável por análises financeiras"""
+    
     def analisar_ativo(self, ticker: str) -> Dict:
-        if not ticker or not isinstance(ticker, str):
-            return {'erro': 'Ticker inválido'}
+        """Analisa um ativo específico"""
         try:
-            acao = yf.Ticker(ticker.strip().upper())
-            info = acao.info
-            if not info or 'longName' not in info or not info.get('longName'):
-                return {'erro': f"Dados insuficientes para '{ticker}'."}
-
-            def get_numeric(key: str, default: float = 0.0) -> float:
-                val = info.get(key, default)
-                return float(val) if val is not None else default
-
-            dados = {
-                'ticker': ticker,
-                'nome_empresa': info.get('longName', 'N/A'),
-                'preco_atual': get_numeric('currentPrice') or get_numeric('regularMarketPrice'),
-                'dividend_yield': get_numeric('dividendYield'),
-                'p_l': get_numeric('trailingPE'),
-                'p_vp': get_numeric('priceToBook'),
-                'roe': get_numeric('returnOnEquity'),
+            logger.info(f"Analisando ticker: {ticker}")
+            ticker_obj = yf.Ticker(ticker)
+            info = ticker_obj.info
+            
+            # Busca dados históricos
+            historico = ticker_obj.history(period="1y")
+            historico_close = historico['Close'] if not historico.empty else None
+            
+            # Extrai métricas financeiras
+            dy = info.get('dividendYield', 0) or 0
+            pl = info.get('trailingPE', 0) or 0
+            pvp = info.get('priceToBook', 0) or 0
+            roe = info.get('returnOnEquity', 0) or 0
+            preco_atual = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
+            
+            # Se preço atual ainda for 0, tenta pegar do histórico
+            if preco_atual == 0 and historico_close is not None and not historico_close.empty:
+                preco_atual = float(historico_close.iloc[-1])
+            
+            # Calcula score refinado
+            # Pesos: DY=4, ROE=3, P/L=1.5, P/VP=1.5
+            score_dy = min(dy / 0.08, 1) * 4 if dy > 0 else 0  # Normalizado por um DY "ótimo" de 8%
+            score_pl = min(15 / pl if pl > 0 else 0, 1) * 1.5
+            score_pvp = min(2 / pvp if pvp > 0 else 0, 1) * 1.5  # P/VP até 2 ainda pode ser ok
+            score_roe = min(roe / 0.20, 1) * 3 if roe > 0 else 0  # Normalizado por um ROE "excelente" de 20%
+            score_total = min(score_dy + score_pl + score_pvp + score_roe, 10)
+            
+            return {
+                "ticker": ticker,
+                "nome_empresa": info.get('longName', 'N/A'),
+                "setor": info.get('sector', 'N/A'),
+                "preco_atual": preco_atual,
+                "dy": dy,
+                "pl": pl,
+                "pvp": pvp,
+                "roe": roe,
+                "score": score_total,
+                "historico": historico_close
             }
-            if dados['dividend_yield'] > 1: dados['dividend_yield'] /= 100
-            if dados['roe'] > 1: dados['roe'] /= 100
-            dados['score'] = self._calcular_score_custo_beneficio(dados)
-            return dados
+            
         except Exception as e:
-            return {'erro': f"Erro ao buscar dados para {ticker}: {e}"}
-
-    def descobrir_oportunidades(self) -> List[Dict]:
-        resultados = []
-        progress_bar = st.progress(0, "Analisando o mercado para você...")
-        for i, ticker in enumerate(TICKERS_IBOV):
-            resultado = self.analisar_ativo(ticker)
-            if 'erro' not in resultado and resultado.get('preco_atual', 0) > 0:
-                resultados.append(resultado)
-            # CORREÇÃO: Progress SEMPRE entre 0.0 e 1.0
-            progress = min((i + 1) / len(TICKERS_IBOV), 1.0)
-            progress_bar.progress(progress, f"Analisando {ticker}...")
-        progress_bar.empty()
-        return sorted(resultados, key=lambda x: x.get('score', 0), reverse=True)
+            logger.error(f"Erro ao analisar o ticker {ticker}: {e}")
+            return {"ticker": ticker, "error": str(e)}
 
 class RendyXaiAgent:
-    def _gerar_recomendacao(self, score: float) -> str:
-        if not isinstance(score, (int, float)):
-            score = 0
-        if score >= 7:
-            return "🟢 **OPORTUNIDADE EXCELENTE** - Esta ação apresenta indicadores muito favoráveis para dividendos e valorização."
-        elif score >= 5:
-            return "🟡 **BOA OPORTUNIDADE** - Esta ação tem potencial interessante, mas analise outros fatores antes de investir."
-        elif score >= 3:
-            return "🟠 **OPORTUNIDADE MODERADA** - Esta ação pode ser considerada, mas há opções potencialmente melhores no mercado."
+    """Agente responsável por apresentar análises e relatórios"""
+    
+    def apresentar_relatorio_visual(self, analise: Dict, perfil: Dict):
+        """Apresenta relatório visual da análise"""
+        if analise.get("error"):
+            st.error(f"Não foi possível obter os dados para {analise['ticker']}. Tente outro ativo.")
+            return
+        
+        # Tratamento de casos especiais para exibição
+        if analise['dy'] > 0:
+            dy_text = f"{analise['dy'] * 100:.2f}%"
+            dy_help = GLOSSARIO_FINANCEIRO['DY']
         else:
-            return "🔴 **CAUTELA RECOMENDADA** - Esta ação apresenta indicadores menos favoráveis. Considere outras alternativas."
-
-    def apresentar_relatorio_visual(self, analise_ativo: Dict, perfil_usuario: Dict):
-        if 'erro' in analise_ativo:
-            st.error(f"❌ **Não foi possível gerar um relatório:** {analise_ativo['erro']}")
-            return
-
-        try:
-            nome_usuario = perfil_usuario.get('nome', 'Investidor').split(' ')[0]
-            valor_investir = float(perfil_usuario.get('valor_disponivel', 0))
-            preco_acao = float(analise_ativo.get('preco_atual', 0))
-            dy = float(analise_ativo.get('dividend_yield', 0))
-            roe = float(analise_ativo.get('roe', 0))
-        except (ValueError, TypeError):
-            st.error("❌ **Erro:** Dados numéricos inválidos para gerar projeção.")
-            return
-
-        if valor_investir <= 0 or preco_acao <= 0:
-            st.warning("Dados insuficientes para gerar projeção (valor ou preço da ação inválidos).")
-            return
-
-        qtd_acoes = int(valor_investir / preco_acao)
-        valor_investido_real = qtd_acoes * preco_acao
-        renda_passiva_anual = valor_investido_real * dy
-
-        st.subheader(f"📊 Relatório Personalizado para {nome_usuario}")
-        st.markdown(f"### {analise_ativo.get('nome_empresa', 'N/A')} ({analise_ativo.get('ticker', 'N/A')})")
-
-        st.markdown("#### 🎯 Suas Projeções para 1 Ano")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("💰 Renda Passiva Anual", f"R$ {renda_passiva_anual:,.2f}", f"{dy*100:.2f}% a.a.")
-        with col2:
-            st.metric("📈 Valor Investido", f"R$ {valor_investido_real:,.2f}", f"{qtd_acoes} ações")
-        with col3:
-            st.metric("💎 Potencial de Valorização", f"{roe*100:.2f}%", "Baseado no ROE")
-
-        if dy > 0:
-            st.markdown("##### Histórico de Dividend Yield (%)")
-            st.bar_chart(pd.DataFrame({'Dividend Yield (%)': [dy*100]}, index=[analise_ativo['ticker']]))
-
-        st.markdown("#### 💡 Recomendação Rendy AI")
-        st.markdown(self._gerar_recomendacao(analise_ativo.get('score', 0)))
-
-        with st.expander("🔍 Ver Análise Técnica Detalhada (Score, P/L, ROE...)"):
-            score = analise_ativo.get('score', 0)
-            pl = analise_ativo.get('p_l', 0)
-            pvp = analise_ativo.get('p_vp', 0)
-
-            st.write(f"**Score Custo/Benefício: {score:.1f} / 10**")
-            st.progress(min(score / 10, 1.0))  # CORREÇÃO: Sempre <= 1.0
-            st.markdown("""
-            <small>O <b>Score</b> avalia custo/benefício considerando dividendos, ROE, P/L e P/VP. Quanto mais próximo de 10, melhor.</small>
-            """, unsafe_allow_html=True)
-
-            if dy > 0:
-                st.success(f"- **Dividend Yield {dy*100:.2f}%:** Bom potencial de renda passiva.")
-            else:
-                st.warning("- **Dividend Yield:** Dado não disponível ou a empresa não paga dividendos.")
-
-            if pl > 0:
-                if pl <= 15:
-                    st.success(f"- **P/L {pl:.2f}:** Potencialmente subvalorizada (bom).")
-                else:
-                    st.warning(f"- **P/L {pl:.2f}:** Preço pode estar elevado.")
-            else:
-                st.info("- **P/L:** Dado não disponível.")
-
-            if roe > 0:
-                st.success(f"- **ROE {roe*100:.2f}%:** Boa capacidade de gerar lucro.")
-            else:
-                st.warning("- **ROE:** Dado não disponível.")
-
-            if pvp > 0:
-                if pvp <= 1.5:
-                    st.success(f"- **P/VP {pvp:.2f}:** Pode ser uma boa oportunidade de valor.")
-                else:
-                    st.warning(f"- **P/VP {pvp:.2f}:** Preço acima do valor patrimonial.")
-            else:
-                st.info("- **P/VP:** Dado não disponível.")
-
-        st.caption(f"Relatório gerado em: {datetime.now().strftime('%d/%m/%Y às %H:%M')}")
-        st.warning("Aviso: Esta análise é educacional e baseada em dados históricos, não sendo uma garantia de resultados futuros. Sempre diversifique seus investimentos.")
-
-# ==============================================================================
-# CACHE DE ANÁLISE DE MERCADO
-# ==============================================================================
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def rodar_analise_de_mercado():
-    finance_agent = RendyFinanceAgent()
-    resultados = finance_agent.descobrir_oportunidades()
-    return resultados
-
-# ==============================================================================
-# TELAS DO APP
-# ==============================================================================
-
-def tela_boas_vindas():
-    st.markdown("🤖", unsafe_allow_html=True)
-    st.title("Olá! Eu sou o Rendy.AI 🤖")
-    st.markdown("### Seu assistente de investimentos pessoal...")
-    nome_usuario = st.text_input("Para começarmos, como posso te chamar?", placeholder="Ex: João da Silva")
-    if nome_usuario.strip():
-        if st.button(f"Prazer, {nome_usuario.strip().split(' ')[0]}! Continuar 👋", type="primary"):
-            st.session_state.user_name = nome_usuario.strip()
-            st.session_state.step = "explanation"
-            st.rerun()
-
-def tela_explicacao():
-    primeiro_nome = st.session_state.get('user_name', 'Usuário').split(' ')[0]
-    st.title(f"Perfeito, {primeiro_nome}! 👋")
-    st.markdown("### Como eu vou te ajudar:\n\n- Encontrar as melhores oportunidades de investimentos em ações\n- Analisar riscos, dividendos e potencial de valorização\n- Gerar projeções personalizadas de acordo com seu perfil e valor investido\n- Tudo de modo didático, rápido e gratuito!\n")
-    col1, col2 = st.columns(2)
-    if col1.button("⬅️ Voltar"):
-        st.session_state.step = "welcome"; st.rerun()
-    if col2.button("Vamos começar! 🚀", type="primary"):
-        st.session_state.step = "registration"; st.rerun()
-
-def tela_cadastro():
-    st.title("Crie sua Conta Gratuita")
-    st.markdown("Só mais um passo! Complete seu cadastro para desbloquear sua assessoria.")
-    with st.form("cadastro_form"):
-        nome = st.text_input("📝 Seu nome completo", value=st.session_state.get('user_name', ''))
-        email = st.text_input("📧 Seu melhor e-mail", placeholder="seuemail@exemplo.com")
-        aceito_termos = st.checkbox("Li e aceito que este é um aplicativo educacional.")
-        submitted = st.form_submit_button("✅ Criar minha conta", type="primary")
-        if submitted:
-            if not nome.strip() or not email.strip() or not aceito_termos or not validar_email(email):
-                st.error("⚠️ Por favor, preencha todos os campos corretamente e aceite os termos.")
-            else:
-                if salvar_usuario(nome, email):
-                    st.session_state.step = "main_app"
-                    st.success("🎉 Conta criada!")
-                    st.rerun()
-                else:
-                    st.error("❌ Erro ao criar conta.")
-
-def tela_principal():
-    primeiro_nome = st.session_state.get('user_name', 'Investidor').split(' ')[0]
-    col_title, col_btn = st.columns([4, 1])
-    with col_title:
-        st.title(f"Olá, {primeiro_nome}!")
-        st.markdown("**Seu painel de investimentos Rendy AI**")
-    with col_btn:
-        if st.button("🔄", help="Atualizar dados"):
-            st.cache_data.clear()
-            st.rerun()
-        if st.button("🚪", help="Sair"):
-            limpar_sessao_e_cache()
-    st.markdown("---")
-
-    tab1, tab2 = st.tabs(["🏆 Ranking de Oportunidades", "📊 Análise de Ações"])
-
-    oportunidades = rodar_analise_de_mercado()
-    if not oportunidades:
-        st.error("❌ Não foi possível carregar as oportunidades. Tente atualizar os dados.")
-        st.stop()
-
-    with tab1:
-        st.info("Aqui estão as melhores oportunidades do Ibovespa, classificadas por um score de custo/benefício focado em dividendos e valor.")
-
-        melhor_oportunidade = oportunidades[0]
-        with st.container(border=True):
-            st.subheader(f"🥇 Oportunidade em Destaque: {melhor_oportunidade['ticker']}")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Empresa", melhor_oportunidade['nome_empresa'].split(' ')[0])
-            c2.metric("Score Rendy AI", f"{melhor_oportunidade['score']:.1f}/10")
-            c3.metric("Div. Yield", f"{melhor_oportunidade['dividend_yield']*100:.2f}%")
-
-        st.write("### Ranking Completo")
-        df = pd.DataFrame(oportunidades)
-        df_display = df[['ticker', 'nome_empresa', 'score', 'dividend_yield', 'p_l', 'roe']].copy()
-        df_display.columns = ['Ticker', 'Empresa', 'Score', 'Div. Yield', 'P/L', 'ROE']
-        df_display['Div. Yield'] = df['dividend_yield'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
-        df_display['P/L'] = df['p_l'].apply(lambda x: f"{x:.2f}" if x > 0 else "N/A")
-        df_display['ROE'] = df['roe'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
-
-        st.dataframe(
-            df_display.head(10 if not st.session_state.ver_todos else None),
-            hide_index=True, use_container_width=True,
-            column_config={"Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=10, format="%.1f")}
-        )
-        st.markdown("""
-        <small>O <b>Score</b> avalia custo/benefício considerando dividendos, ROE, P/L e P/VP. Quanto mais próximo de 10, melhor.</small>
-        """, unsafe_allow_html=True)
-        if not st.session_state.ver_todos and len(oportunidades) > 10:
-            if st.button("📈 Ver Ranking Completo"):
-                st.session_state.ver_todos = True
-                st.rerun()
-
-    with tab2:
-        st.info("Escolha uma ação do ranking e informe quanto você quer investir para receber uma análise e projeção personalizadas.")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            ticker_selecionado = st.selectbox("📈 Escolha uma ação:", options=[o['ticker'] for o in oportunidades])
-        with col2:
-            st.session_state.valor_investir = st.number_input(
-                "💰 Quanto quer investir (R$):",
-                min_value=100.0,
-                value=st.session_state.valor_investir,
-                step=100.0
+            dy_text = "Não Paga"
+            dy_help = "Esta empresa não distribuiu dividendos recentemente."
+        
+        if analise['pl'] > 0:
+            pl_text = f"{analise['pl']:.2f}"
+        else:
+            pl_text = "N/A (Prejuízo)"
+        
+        st.subheader(f"Análise para {analise['nome_empresa']} ({analise['ticker']})")
+        
+        # Métricas principais
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Score Rendy AI", f"{analise['score']:.1f}/10", 
+                   help=GLOSSARIO_FINANCEIRO['Score'])
+        col2.metric("Dividend Yield", dy_text, help=dy_help)
+        col3.metric("Preço/Lucro (P/L)", pl_text, help=GLOSSARIO_FINANCEIRO['P/L'])
+        col4.metric("Preço da Ação", f"R$ {analise['preco_atual']:.2f}")
+        
+        # Simulação de investimento
+        valor_simulado = perfil['valor_total_disponivel']
+        if analise['preco_atual'] > 0:
+            qtd_acoes = int(valor_simulado / analise['preco_atual'])
+            ganho_anual_projetado = valor_simulado * analise['dy']
+            
+            st.success(
+                f"Com **R$ {valor_simulado:,.2f}**, você poderia comprar **{qtd_acoes}** "
+                f"ações e ter uma projeção de renda passiva de **R$ {ganho_anual_projetado:,.2f}** no próximo ano."
             )
-
-        if st.button("🚀 Gerar Minha Análise", type="primary", use_container_width=True):
-            if not ticker_selecionado:
-                st.warning("⚠️ Por favor, selecione uma ação.")
+        else:
+            st.warning("Não foi possível calcular a simulação devido ao preço indisponível.")
+        
+        # Gráfico histórico
+        st.subheader("Desempenho da Ação no Último Ano")
+        if analise.get('historico') is not None and not analise['historico'].empty:
+            st.line_chart(analise['historico'], use_container_width=True)
+        else:
+            st.warning("Não foi possível carregar o histórico de cotações para este ativo.")
+        
+        # Análise comparativa
+        with st.expander("🆚 Comparar com outro ativo"):
+            lista_comparacao = [t for t in LISTA_TICKERS_IBOV_SIMPLIFICADA if t != analise['ticker']]
+            ticker_comparacao = st.selectbox(
+                "Selecione um ativo para comparar:",
+                options=lista_comparacao,
+                key=f"comp_{analise['ticker']}"
+            )
+            
+            if ticker_comparacao:
+                finance_agent_comp = RendyFinanceAgent()
+                analise_comp = finance_agent_comp.analisar_ativo(ticker_comparacao)
+                
+                if not analise_comp.get("error"):
+                    st.write(f"Comparando **{analise['ticker']}** vs **{analise_comp['ticker']}**")
+                    
+                    # Tabela de comparação
+                    dados_tabela = {
+                        'Métrica': ['Score', 'Div. Yield', 'P/L', 'ROE', 'Preço'],
+                        analise['ticker']: [
+                            f"{analise['score']:.1f}/10",
+                            f"{analise['dy']*100:.2f}%",
+                            f"{analise['pl']:.2f}" if analise['pl'] > 0 else "N/A",
+                            f"{analise['roe']*100:.2f}%",
+                            f"R$ {analise['preco_atual']:.2f}"
+                        ],
+                        analise_comp['ticker']: [
+                            f"{analise_comp['score']:.1f}/10",
+                            f"{analise_comp['dy']*100:.2f}%",
+                            f"{analise_comp['pl']:.2f}" if analise_comp['pl'] > 0 else "N/A",
+                            f"{analise_comp['roe']*100:.2f}%",
+                            f"R$ {analise_comp['preco_atual']:.2f}"
+                        ]
+                    }
+                    df_comp = pd.DataFrame(dados_tabela)
+                    st.dataframe(df_comp, use_container_width=True, hide_index=True)
+                else:
+                    st.error(f"Não foi possível carregar dados para {ticker_comparacao}")
+        
+        st.divider()
+        
+        # Botão para adicionar à carteira
+        if analise['ticker'] not in [item['ticker'] for item in st.session_state.carteira_em_montagem]:
+            if len(st.session_state.carteira_em_montagem) < 10:
+                if st.button("➕ Adicionar à Minha Carteira", key=f"add_{analise['ticker']}"):
+                    st.session_state.carteira_em_montagem.append({'ticker': analise['ticker']})
+                    st.toast(f"{analise['ticker']} adicionado com sucesso!", icon="✅")
+                    time.sleep(1)
+                    st.rerun()
             else:
-                invest_agent = RendyInvestAgent()
-                finance_agent = RendyFinanceAgent()
-                xai_agent = RendyXaiAgent()
+                st.warning("Você atingiu o limite de 10 ações na sua carteira em montagem.")
+        else:
+            st.info("Esta ação já está na sua carteira em montagem.")
+    
+    def analisar_carteira_completa(self, carteira_alocada: List[Dict], finance_agent: RendyFinanceAgent) -> Dict:
+        """Analisa a carteira completa do usuário"""
+        total_investido = 0
+        renda_passiva_anual_total = 0
+        
+        for item in carteira_alocada:
+            valor_alocado = item.get('valor_alocado', 0)
+            if valor_alocado > 0:
+                analise = finance_agent.analisar_ativo(item['ticker'])
+                if not analise.get("error"):
+                    total_investido += valor_alocado
+                    renda_passiva_anual_total += valor_alocado * analise['dy']
+        
+        dy_medio_ponderado = (renda_passiva_anual_total / total_investido) if total_investido > 0 else 0
+        
+        return {
+            "total_investido": total_investido,
+            "renda_passiva_anual_total": renda_passiva_anual_total,
+            "dy_medio_ponderado": dy_medio_ponderado
+        }
 
-                with st.spinner(f"Executando análise completa para {ticker_selecionado}..."):
-                    perfil = invest_agent.obter_perfil_usuario()
-                    analise = finance_agent.analisar_ativo(ticker_selecionado)
-                    xai_agent.apresentar_relatorio_visual(analise, perfil)
+# ============================================================================
+# TELAS DA APLICAÇÃO
+# ============================================================================
 
-# ==============================================================================
-# CONTROLE PRINCIPAL DA APLICAÇÃO
-# ==============================================================================
+def tela_dashboard():
+    """Tela principal do dashboard"""
+    st.title(f"Olá, {st.session_state.nome_usuario}! 👋")
+    
+    # Passo 1: Simulação
+    st.header("Passo 1: Simule seu Investimento")
+    st.markdown("Descubra o potencial de uma ação. Selecione um ativo, defina o valor e veja uma projeção clara dos seus ganhos.")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        ticker_selecionado = st.selectbox("Selecione um ativo:", LISTA_TICKERS_IBOV_SIMPLIFICADA)
+    with col2:
+        st.session_state.valor_a_investir_simulacao = st.number_input(
+            "Valor para simular (R$):",
+            min_value=100.0,
+            value=st.session_state.valor_a_investir_simulacao,
+            step=100.0
+        )
+    
+    if st.button("📊 Gerar Simulação", use_container_width=True, type="primary"):
+        invest_agent = RendyInvestAgent()
+        finance_agent = RendyFinanceAgent()
+        
+        with st.spinner(f"Analisando {ticker_selecionado}..."):
+            perfil = invest_agent.obter_perfil_usuario()
+            analise = finance_agent.analisar_ativo(ticker_selecionado)
+            st.session_state.analise_cache = (analise, perfil)
+    
+    # Exibe análise se disponível
+    if st.session_state.get('analise_cache'):
+        analise, perfil = st.session_state.analise_cache
+        xai_agent = RendyXaiAgent()
+        xai_agent.apresentar_relatorio_visual(analise, perfil)
+    
+    st.divider()
+    
+    # Passo 2: Montagem da carteira
+    if st.session_state.carteira_em_montagem:
+        st.header("Passo 2: Monte sua Carteira de Renda Passiva")
+        st.markdown("Revise sua lista de ações pré-selecionadas e avance para definir a alocação de recursos.")
+        
+        for i, item in enumerate(st.session_state.carteira_em_montagem):
+            col1, col2 = st.columns([4, 1])
+            col1.info(f"**{i+1}. {item['ticker']}**")
+            if col2.button("❌ Remover", key=f"remove_{item['ticker']}", use_container_width=True):
+                st.session_state.carteira_em_montagem.pop(i)
+                st.rerun()
+        
+        if st.button("Definir Alocação de Recursos ➔", use_container_width=True):
+            st.session_state.dashboard_view = 'alocacao'
+            st.rerun()
+    
+    # Passo 3: Alocação
+    if st.session_state.dashboard_view == 'alocacao':
+        st.header("Passo 3: Defina sua Alocação")
+        st.markdown("Distribua o seu capital entre as ações escolhidas.")
+        
+        with st.form("alocacao_form"):
+            alocacoes = []
+            for item in st.session_state.carteira_em_montagem:
+                valor_alocado = st.number_input(
+                    f"Valor para **{item['ticker']}** (R$)",
+                    min_value=0.0,
+                    key=f"aloc_{item['ticker']}"
+                )
+                alocacoes.append({'ticker': item['ticker'], 'valor_alocado': valor_alocado})
+            
+            if st.form_submit_button("✔ Analisar Minha Carteira Completa"):
+                total_alocado = sum(item['valor_alocado'] for item in alocacoes)
+                valor_disponivel = RendyInvestAgent().obter_perfil_usuario()['valor_total_disponivel']
+                
+                if total_alocado > valor_disponivel:
+                    st.error(f"O valor total alocado (R$ {total_alocado:,.2f}) não pode exceder o seu valor de simulação (R$ {valor_disponivel:,.2f}).")
+                else:
+                    st.session_state.carteira_alocada = alocacoes
+                    st.session_state.dashboard_view = 'resumo'
+                    st.rerun()
+    
+    # Passo 4: Resumo
+    if st.session_state.dashboard_view == 'resumo':
+        st.header("Resumo do Seu Plano de Investimentos")
+        
+        finance_agent = RendyFinanceAgent()
+        xai_agent = RendyXaiAgent()
+        
+        with st.spinner("Calculando o potencial da sua carteira..."):
+            resumo_carteira = xai_agent.analisar_carteira_completa(st.session_state.carteira_alocada, finance_agent)
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Investido", f"R$ {resumo_carteira['total_investido']:,.2f}")
+        col2.metric("Renda Anual Estimada", f"R$ {resumo_carteira['renda_passiva_anual_total']:,.2f}")
+        col3.metric("Dividend Yield Médio", f"{resumo_carteira['dy_medio_ponderado'] * 100:.2f}%")
+        
+        st.info("Este é o potencial da sua carteira com base nos dados atuais. Lembre-se que o mercado é volátil.")
+        
+        if st.button("Confirmar e Salvar Plano", type="primary", use_container_width=True):
+            dados_usuario = carregar_dados_usuario()
+            dados_usuario['carteira_salva'] = st.session_state.carteira_alocada
+            salvar_dados_usuario(dados_usuario)
+            
+            st.session_state.carteira_salva = st.session_state.carteira_alocada
+            st.session_state.carteira_em_montagem = []
+            st.session_state.dashboard_view = 'simulacao'
+            st.session_state.analise_cache = None
+            
+            st.success("Seu plano de investimentos foi salvo com sucesso!")
+            st.balloons()
+            time.sleep(3)
+            st.rerun()
+
+def tela_welcome():
+    """Tela de boas-vindas e login"""
+    st.title("Bem-vindo(a) ao Rendy AI 🤖")
+    st.markdown("Faça seu login ou cadastro para acessar seu dashboard.")
+    
+    nome = st.text_input("Seu nome:")
+    email = st.text_input("Seu email:")
+    
+    if st.button("Acessar Dashboard", type="primary"):
+        if nome and email:
+            # Validação básica de email
+            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+            if not re.match(email_pattern, email):
+                st.error("Por favor, insira um email válido.")
+                return
+            
+            salvar_dados_usuario({'nome': nome, 'email': email, 'carteira_salva': []})
+            st.session_state.step = 'dashboard'
+            st.session_state.nome_usuario = nome.split(' ')[0]
+            st.rerun()
+        else:
+            st.error("Por favor, preencha nome e email.")
+
+# ============================================================================
+# FLUXO PRINCIPAL DA APLICAÇÃO
+# ============================================================================
 
 def main():
+    """Função principal da aplicação"""
     try:
         inicializar_sessao()
-        current_step = st.session_state.get('step', 'welcome')
-
-        if current_step == "welcome":
-            tela_boas_vindas()
-        elif current_step == "explanation":
-            tela_explicacao()
-        elif current_step == "registration":
-            tela_cadastro()
-        elif current_step == "main_app":
-            tela_principal()
+        
+        # Verifica se há usuário logado
+        if os.path.exists(USUARIO_JSON) and (not st.session_state.nome_usuario):
+            user_data = carregar_dados_usuario()
+            if user_data and user_data.get('nome'):
+                st.session_state.step = 'dashboard'
+                st.session_state.nome_usuario = user_data.get('nome', '').split(' ')[0]
+        
+        # Navegação entre telas
+        if st.session_state.step == "dashboard":
+            tela_dashboard()
         else:
-            st.session_state.step = "welcome"
-            st.rerun()
+            tela_welcome()
+            
     except Exception as e:
-        logger.error(f"Erro crítico na aplicação: {e}")
-        st.error("❌ Erro crítico. Por favor, recarregue a página.")
-        if st.button("🔄 Resetar Aplicação"):
-            limpar_sessao_e_cache()
+        logger.error(f"Ocorreu um erro inesperado na aplicação: {e}")
+              st.error("Ocorreu um erro inesperado. Por favor, recarregue a página.")
 
 if __name__ == "__main__":
     main()
