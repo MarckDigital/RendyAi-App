@@ -67,6 +67,8 @@ def inicializar_sessao():
         st.session_state['valor_simulacao'] = 5000.0
     if 'analise_simulacao' not in st.session_state:
         st.session_state['analise_simulacao'] = None
+    if 'lista_alocada' not in st.session_state:
+        st.session_state['lista_alocada'] = []
 
 # ===================== AGENTES E ANÁLISE DE AÇÕES =============================
 
@@ -84,7 +86,6 @@ class RendyFinanceAgent:
             preco_atual = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
             if preco_atual == 0 and historico_close is not None and hasattr(historico_close, 'iloc') and not historico_close.empty:
                 preco_atual = float(historico_close.iloc[-1])
-            # Score ponderado e explicativo
             score_dy = min(dy / 0.08, 1) * 4 if dy > 0 else 0
             score_pl = min(15 / pl if pl > 0 else 0, 1) * 1.5
             score_pvp = min(2 / pvp if pvp > 0 else 0, 1) * 1.5
@@ -303,7 +304,7 @@ def main():
                     return
                 salvar_usuario(nome.strip(), email.strip())
                 st.success(f"Bem-vindo, {nome.split()[0]}! Agora navegue nas abas.")
-                st.experimental_rerun()
+                st.rerun()
         return
 
     tabs = st.tabs([
