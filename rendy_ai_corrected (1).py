@@ -8,8 +8,12 @@ import logging
 from datetime import datetime
 from typing import Dict, List
 
-# ======================= CONFIGURAÇÕES E CONSTANTES ===========================
-st.set_page_config(page_title="Rendy AI - Sua Jornada de Investimentos", page_icon="🤖", layout="centered")
+# ========== CONFIGURAÇÕES E CONSTANTES ==========
+st.set_page_config(
+    page_title="Rendy AI - Assessor de Investimentos",
+    page_icon="🤖",
+    layout="centered"
+)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -34,7 +38,7 @@ GLOSSARIO = {
     "ROE": "Retorno sobre o patrimônio líquido. Mede a eficiência da empresa em gerar lucros.",
 }
 
-# ========================== UTILITÁRIOS E SESSÃO ==============================
+# ========== UTILITÁRIOS E SESSÃO ==========
 def inicializar_ambiente():
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR)
@@ -70,8 +74,7 @@ def inicializar_sessao():
     if 'lista_alocada' not in st.session_state:
         st.session_state['lista_alocada'] = []
 
-# ===================== AGENTES E ANÁLISE DE AÇÕES =============================
-
+# ========== AGENTES E ANÁLISE DE AÇÕES ==========
 class RendyFinanceAgent:
     def analisar_ativo(self, ticker: str) -> Dict:
         try:
@@ -108,7 +111,7 @@ class RendyFinanceAgent:
 
     def descobrir_oportunidades(self) -> List[Dict]:
         resultados = []
-        progress_bar = st.progress(0, "Rendy está analisando todo o mercado para você!")
+        progress_bar = st.progress(0, "Analisando todo o mercado para você!")
         for i, ticker in enumerate(LISTA_TICKERS_IBOV):
             resultado = self.analisar_ativo(ticker)
             if 'error' not in resultado and resultado.get('preco_atual', 0) > 0:
@@ -118,8 +121,7 @@ class RendyFinanceAgent:
         progress_bar.empty()
         return sorted(resultados, key=lambda x: x.get('score', 0), reverse=True)
 
-# ============================ UI EXPLICATIVA ==================================
-
+# ========== UI EXPLICATIVA ==========
 def tooltip(texto):
     return f"ℹ️ <span style='color:gray;font-size:0.95em'>{texto}</span>"
 
@@ -128,16 +130,15 @@ def render_explicacao_campos():
     for key, desc in GLOSSARIO.items():
         st.markdown(f"- **{key}**: {desc}")
 
-# ============================== ABAS ==========================================
-
+# ========== ABAS ==========
 def aba_simulacao():
     st.header("🎯 Simulação Personalizada de Investimento")
     st.markdown("""
-    Bem-vindo à área principal do Rendy! Aqui você simula um investimento REAL, escolhendo uma ação e um valor para investir.  
+    Aqui você simula um investimento real, escolhendo uma ação e um valor para investir.  
     <br>
-    <b>O objetivo:</b> Te mostrar, de forma didática, quanto de renda passiva anual você pode conquistar e como cada métrica impacta sua decisão!
+    <b>O objetivo:</b> Mostrar de forma didática quanto de renda passiva anual é possível conquistar e como cada métrica impacta sua decisão!
     """, unsafe_allow_html=True)
-    st.info("**Dica do Rendy:** Use esse simulador quantas vezes quiser para experimentar diferentes valores e ações! Clique nos (i) para entender cada campo.")
+    st.info("Dica: Use o simulador para experimentar valores e ações. Clique nos (i) para entender cada campo.")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -152,7 +153,7 @@ def aba_simulacao():
 
     if st.button("Simular meu investimento 🚀", type="primary", use_container_width=True):
         agent = RendyFinanceAgent()
-        with st.spinner("Rendy está analisando sua simulação..."):
+        with st.spinner("Analisando sua simulação..."):
             st.session_state['analise_simulacao'] = agent.analisar_ativo(ticker)
 
     if st.session_state.get('analise_simulacao'):
@@ -188,7 +189,7 @@ def aba_ranking():
     <br>
     <b>Como interpretar?</b> O Score combina potencial de dividendos, valorização e preço justo.
     <br>
-    <i>Dica do Rendy:</i> Passe o mouse sobre cada coluna para entender os indicadores e clique em uma ação para simular.
+    Dica: Passe o mouse sobre cada coluna para entender os indicadores e clique em uma ação para simular.
     """, unsafe_allow_html=True)
     agent = RendyFinanceAgent()
     oportunidades = agent.descobrir_oportunidades()
@@ -212,11 +213,10 @@ def aba_carteira():
     st.markdown("""
     <b>Objetivo:</b> Aqui você pode montar sua carteira de ações escolhidas, distribuir seu capital e ver a projeção de renda passiva total.
     <br>
-    <i>Dica do Rendy:</i> Selecione várias ações, defina quanto investir em cada uma e veja o resultado combinado!
+    Dica: Selecione várias ações, defina quanto investir em cada uma e veja o resultado combinado!
     """, unsafe_allow_html=True)
     if 'lista_alocada' not in st.session_state:
         st.session_state['lista_alocada'] = []
-    # Seleção de ações
     tickers_add = st.multiselect(
         "Selecione as ações para sua carteira:",
         LISTA_TICKERS_IBOV,
@@ -226,10 +226,9 @@ def aba_carteira():
         st.session_state['carteira_em_montagem'] = [{'ticker': t} for t in tickers_add]
         st.success("Ações adicionadas! Agora defina a alocação para cada uma.")
 
-    # Alocação de valores
     total = 0
     alocacoes = []
-    st.markdown(tooltip("Defina quanto deseja investir em cada ação. Rendy recomenda diversificação para diminuir riscos!"), unsafe_allow_html=True)
+    st.markdown(tooltip("Defina quanto deseja investir em cada ação. Diversificação pode diminuir riscos!"), unsafe_allow_html=True)
     for item in st.session_state['carteira_em_montagem']:
         val = st.number_input(
             f"Valor para {item['ticker']}:",
@@ -266,28 +265,25 @@ def aba_carteira():
         render_explicacao_campos()
 
 def aba_sobre():
-    st.header("👋 Sobre o Rendy AI & Glossário")
+    st.header("ℹ️ Sobre o Rendy AI & Glossário")
     st.markdown("""
-    Olá, eu sou o Rendy! Seu anfitrião virtual para investimentos inteligentes e didáticos 👨‍💼🤖  
-    <br>
-    <b>Minhas funções:</b>
-    - Explicar indicadores de investimento de modo simples e prático
-    - Simular oportunidades para você experimentar antes de investir
-    - Ajudar a montar sua carteira de renda passiva
-    - Ensinar como analisar as melhores oportunidades do mercado
-    <br>
+    O Rendy AI é seu assessor virtual para investimentos inteligentes e didáticos, pronto para ajudar você a:
+    - Entender indicadores de investimento de modo simples e prático
+    - Simular oportunidades antes de investir
+    - Montar sua carteira de renda passiva
+    - Aprender a analisar oportunidades do mercado
+
     <b>Glossário:</b>
     """, unsafe_allow_html=True)
     for k, v in GLOSSARIO.items():
         st.markdown(f"- **{k}**: {v}")
 
-# ================================ MAIN ========================================
-
+# ========== MAIN ==========
 def main():
     inicializar_sessao()
-    st.title("🤖 Rendy AI - Seu anfitrião e assessor de investimentos")
+    st.title("🤖 Rendy AI - Assessor de Investimentos")
     st.markdown(
-        "<span style='color:#666;'>Navegue pelas abas abaixo para simular, aprender e investir com inteligência. Rendy vai te orientar em cada passo!</span>",
+        "<span style='color:#666;'>Navegue pelas abas abaixo para simular, aprender e investir com inteligência. O app vai te orientar em cada passo!</span>",
         unsafe_allow_html=True
     )
 
@@ -308,13 +304,13 @@ def main():
         return
 
     tabs = st.tabs([
-        "🎯 Simulação Personalizada",
         "🏆 Ranking de Mercado",
+        "🎯 Simulação Personalizada",
         "💼 Montar Carteira",
         "ℹ️ Sobre & Glossário"
     ])
-    with tabs[0]: aba_simulacao()
-    with tabs[1]: aba_ranking()
+    with tabs[0]: aba_ranking()
+    with tabs[1]: aba_simulacao()
     with tabs[2]: aba_carteira()
     with tabs[3]: aba_sobre()
 
