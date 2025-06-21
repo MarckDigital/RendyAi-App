@@ -277,12 +277,28 @@ def aba_carteira():
     """, unsafe_allow_html=True)
     if 'lista_alocada' not in st.session_state:
         st.session_state['lista_alocada'] = []
+    if 'carteira_em_montagem' not in st.session_state:
+        st.session_state['carteira_em_montagem'] = []
+    
+    # --- NOVO BLOCO: Sugestão Rendy ---
+    agent = RendyFinanceAgent()
+    with st.expander("💡 Sugestão do Assistente Rendy: Top 10 Dividendos"):
+        st.markdown("Essas são as 10 ações com maiores yields de dividendos agora, selecionadas automaticamente pelo Rendy.")
+        oportunidades = agent.descobrir_oportunidades()
+        top_10_div = sorted(oportunidades, key=lambda x: x['dy'], reverse=True)[:10]
+        top_10_tickers = [x['ticker'] for x in top_10_div]
+        st.write(", ".join(top_10_tickers))
+        if st.button("Adicionar as 10 melhores à minha carteira!", key="btn_add_top10"):
+            st.session_state['carteira_em_montagem'] = [{'ticker': t} for t in top_10_tickers]
+            st.success("Top 10 de dividendos adicionadas à carteira! Você pode ajustar ou remover depois.")
+
+    # --- Seleção tradicional (mantida) ---
     tickers_add = st.multiselect(
         "Selecione as ações para sua carteira:",
         LISTA_TICKERS_IBOV,
         default=[a['ticker'] for a in st.session_state['carteira_em_montagem']]
     )
-    if st.button("Adicionar à Carteira", use_container_width=True):
+    if st.button("Adicionar à Carteira", use_container_width=True, key="btn_adicionar"):
         st.session_state['carteira_em_montagem'] = [{'ticker': t} for t in tickers_add]
         st.success("Ações adicionadas! Agora defina a alocação para cada uma.")
 
