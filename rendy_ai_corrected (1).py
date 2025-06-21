@@ -104,7 +104,7 @@ def validar_dy(dy: float):
         )
     return dy, ""
 
-# =================== AGENTES E ANÁLISE DE AÇÕES ===================
+# =================== AGENTE E ANÁLISE DE AÇÕES ===================
 class RendyFinanceAgent:
     def analisar_ativo(self, ticker: str) -> dict:
         try:
@@ -145,15 +145,6 @@ class RendyFinanceAgent:
             logger.error(f"Erro ao analisar {ticker}: {e}")
             return {"ticker": ticker, "error": str(e)}
 
-    @st.cache_data(show_spinner="🔄 Analisando mercado, aguarde...")
-    def descobrir_oportunidades(self):
-        resultados = []
-        for i, ticker in enumerate(LISTA_TICKERS_IBOV):
-            resultado = self.analisar_ativo(ticker)
-            if 'error' not in resultado and resultado.get('preco_atual', 0) > 0:
-                resultados.append(resultado)
-        return sorted(resultados, key=lambda x: x.get('score', 0), reverse=True)
-
     def explicacao_score(self, analise):
         motivos = []
         if analise['dy'] > 0.08:
@@ -167,6 +158,17 @@ class RendyFinanceAgent:
         if not motivos:
             motivos.append("Atende critérios mistos de boa performance")
         return " | ".join(motivos)
+
+# Função de módulo para cache (NÃO método da classe!)
+@st.cache_data(show_spinner="🔄 Analisando mercado, aguarde...")
+def descobrir_oportunidades():
+    agent = RendyFinanceAgent()
+    resultados = []
+    for ticker in LISTA_TICKERS_IBOV:
+        resultado = agent.analisar_ativo(ticker)
+        if 'error' not in resultado and resultado.get('preco_atual', 0) > 0:
+            resultados.append(resultado)
+    return sorted(resultados, key=lambda x: x.get('score', 0), reverse=True)
 
 # =================== UI EXPLICATIVA ===================
 def tooltip(texto):
@@ -270,7 +272,7 @@ def aba_ranking(agent):
     Dica: Passe o mouse sobre cada coluna para entender os indicadores e clique em uma ação para simular.
     """, unsafe_allow_html=True)
     try:
-        oportunidades = agent.descobrir_oportunidades()
+        oportunidades = descobrir_oportunidades()
     except Exception as e:
         st.error("Erro ao carregar ranking: " + str(e))
         return
@@ -313,7 +315,7 @@ def aba_carteira(agent):
     # --- NOVO BLOCO: Sugestão Rendy ---
     with st.expander("💡 Sugestão do Assistente Rendy: Top 10 Dividendos"):
         st.markdown("Essas são as 10 ações com maiores yields de dividendos agora, selecionadas automaticamente pelo Rendy.")
-        oportunidades = agent.descobrir_oportunidades()
+        oportunidades = descobrir_oportunidades()
         top_10_div = sorted(oportunidades, key=lambda x: x['dy'], reverse=True)[:10]
         top_10_tickers = [x['ticker'] for x in top_10_div]
         st.write(", ".join(top_10_tickers))
@@ -458,4 +460,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
