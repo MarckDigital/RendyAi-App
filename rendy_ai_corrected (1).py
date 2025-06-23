@@ -1,462 +1,569 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import os
 import json
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
+from typing import Dict, List, Optional, Tuple, Any
+import plotly.graph_objects as go
+import plotly.express as px
+from dataclasses import dataclass, field
+import warnings
+
+warnings.filterwarnings('ignore')
 
 # =================== CONFIGURAÇÕES E CONSTANTES ===================
 st.set_page_config(
-    page_title="Rendy AI - Assessor de Investimentos",
+    page_title="Rendy AI - Plataforma de IA Agêntica para Investimentos",
     page_icon="🤖",
-    layout="centered"
+    layout="wide"
 )
-logging.basicConfig(level=logging.INFO)
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Diretórios e Arquivos
 DATA_DIR = 'data'
 USUARIO_JSON = os.path.join(DATA_DIR, 'usuario.json')
+HISTORICO_JSON = os.path.join(DATA_DIR, 'historico_interacoes.json')
+os.makedirs(DATA_DIR, exist_ok=True) # Garante que o diretório 'data' existe
+
+# Fuso Horário
 FUSO_BR = pytz.timezone('America/Sao_Paulo')
 
+# Lista de Tickers (reduzida para MVP para agilizar testes)
+# Para produção, a lista original é preferível.
 LISTA_TICKERS_IBOV = [
-    'ABEV3.SA', 'B3SA3.SA', 'BBAS3.SA', 'BBDC4.SA', 'BBSE3.SA', 'BRAP4.SA',
-    'BRFS3.SA', 'BRKM5.SA', 'CCRO3.SA', 'CIEL3.SA', 'CMIG4.SA', 'CPLE6.SA',
-    'CSAN3.SA', 'CSNA3.SA', 'CYRE3.SA', 'ECOR3.SA', 'EGIE3.SA', 'ELET3.SA',
-    'EMBR3.SA', 'ENBR3.SA', 'EQTL3.SA', 'GGBR4.SA', 'GOAU4.SA', 'HAPV3.SA',
-    'HYPE3.SA', 'ITSA4.SA', 'ITUB4.SA', 'JBSS3.SA', 'LREN3.SA', 'MGLU3.SA',
-    'MRFG3.SA', 'MRVE3.SA', 'MULT3.SA', 'NTCO3.SA', 'PCAR3.SA', 'PETR3.SA',
-    'PETR4.SA', 'PRIO3.SA', 'RADL3.SA', 'RAIL3.SA', 'RENT3.SA', 'SANB11.SA',
-    'SBSP3.SA', 'SUZB3.SA', 'TAEE11.SA', 'UGPA3.SA', 'USIM5.SA', 'VALE3.SA',
-    'VIVT3.SA', 'WEGE3.SA', 'YDUQ3.SA'
+    'PETR4.SA', 'VALE3.SA', 'ITUB4.SA', 'BBDC4.SA', 'ABEV3.SA',
+    'B3SA3.SA', 'BBAS3.SA', 'SUZB3.SA', 'WEGE3.SA', 'BPAC11.SA'
 ]
 
-GLOSSARIO = {
-    "Score": "Pontuação até 10 que avalia custo/benefício considerando dividendos (DY), rentabilidade (ROE), preço/lucro (P/L) e preço/valor patrimonial (P/VP). Quanto mais perto de 10, melhor.",
-    "DY": "Dividend Yield: percentual dos dividendos pagos em relação ao preço da ação, anualizado. O app limita DY a no máximo 30% ao ano por padrão para evitar distorções.",
-    "P/L": "Preço dividido pelo lucro por ação. P/L baixo pode indicar ação barata.",
-    "P/VP": "Preço dividido pelo valor patrimonial da empresa por ação. P/VP abaixo de 1 pode indicar ação descontada.",
-    "ROE": "Retorno sobre o patrimônio líquido. Mede a eficiência da empresa em gerar lucros.",
-    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujo valor bruto dos critérios ultrapassou esse limite. São consideradas oportunidades excepcionais segundo o algoritmo."
-}
+# =================== CLASSES DE DADOS ===================
 
-# =================== UTILITÁRIOS E SESSÃO ===================
-def agora_brasilia():
-    return datetime.now(FUSO_BR)
+@dataclass
+class AnaliseAtivo:
+    """Estrutura para armazenar o resultado da análise de um ativo."""
+    ticker: str
+    nome_empresa: str = "N/A"
+    preco_atual: float = 0.0
+    mudanca_percentual_24h: float = 0.0
+    volume_24h: float = 0.0
+    tendencia_curto_prazo: str = "Indefinida"
+    suporte: float = 0.0
+    resistencia: float = 0.0
+    volatilidade_recente: float = 0.0
+    noticias_relevantes: List[str] = field(default_factory=list)
+    score: float = 0.0
+    recomendacao: str = "Manter"
+    grafico_base64: Optional[str] = None # Para embeddings de imagem (futuro)
 
-def inicializar_ambiente():
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR)
+@dataclass
+class PerfilUsuario:
+    """Estrutura para armazenar o perfil do usuário."""
+    nome: str = "Investidor"
+    nivel_experiencia: str = "Iniciante"
+    apetite_risco: str = "Moderado"
+    objetivos: str = "Crescimento a longo prazo"
+    capital_inicial: float = 1000.0
 
-def salvar_usuario(nome: str, email: str):
-    inicializar_ambiente()
-    dados = {'nome': nome, 'email': email, 'data_cadastro': agora_brasilia().isoformat()}
-    with open(USUARIO_JSON, 'w', encoding='utf-8') as f:
-        json.dump(dados, f, ensure_ascii=False, indent=2)
-    st.session_state['nome_usuario'] = nome
-    st.session_state['email_usuario'] = email
+@dataclass
+class InteracaoUsuario:
+    """Estrutura para armazenar o histórico de interações."""
+    timestamp: datetime
+    pergunta: str
+    resposta: str
+    contexto: Dict[str, Any] = field(default_factory=dict)
 
-def carregar_usuario():
+# =================== PERSISTÊNCIA DE DADOS ===================
+
+def carregar_perfil_usuario() -> PerfilUsuario:
+    """Carrega o perfil do usuário do arquivo JSON ou retorna um perfil padrão."""
     if os.path.exists(USUARIO_JSON):
-        with open(USUARIO_JSON, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
-
-def validar_email(email: str) -> bool:
-    return bool(re.match(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$', email))
-
-def inicializar_sessao():
-    if 'nome_usuario' not in st.session_state:
-        user = carregar_usuario()
-        st.session_state['nome_usuario'] = user.get('nome', '')
-        st.session_state['email_usuario'] = user.get('email', '')
-    if 'carteira_em_montagem' not in st.session_state:
-        st.session_state['carteira_em_montagem'] = []
-    if 'valor_simulacao' not in st.session_state:
-        st.session_state['valor_simulacao'] = 5000.0
-    if 'analise_simulacao' not in st.session_state:
-        st.session_state['analise_simulacao'] = None
-    if 'lista_alocada' not in st.session_state:
-        st.session_state['lista_alocada'] = []
-
-def limpar_usuario():
-    if os.path.exists(USUARIO_JSON):
-        os.remove(USUARIO_JSON)
-    for k in ['nome_usuario', 'email_usuario']:
-        st.session_state[k] = ''
-    st.experimental_rerun()
-
-def validar_dy(dy: float):
-    """Valida e ajusta o Dividend Yield, limitando valores anormais."""
-    if dy is None or dy < 0:
-        return 0.0, "⚠️ O Dividend Yield informado é negativo ou inválido, ajustado para 0."
-    if dy > 1:  # Provavelmente veio em percentual, corrija para proporção
-        dy = dy / 100
-    if dy > 0.3:
-        return 0.3, (
-            """<div style='background: #fff3cd; border-left: 5px solid #ffecb5; padding: 8px;'>
-            <b>⚠️ ATENÇÃO:</b> O Dividend Yield informado para este ativo está acima de <b>30%</b>.<br>
-            Isso pode indicar erro na fonte de dados ou evento não recorrente.<br>
-            Consulte relatórios oficiais antes de investir.
-            </div>"""
-        )
-    return dy, ""
-
-# =================== AGENTE E ANÁLISE DE AÇÕES ===================
-class RendyFinanceAgent:
-    def analisar_ativo(self, ticker: str) -> dict:
         try:
-            acao = yf.Ticker(ticker)
-            info = acao.info
-            historico = acao.history(period="1y")
-            historico_close = historico['Close'] if not historico.empty else None
-            dy_raw = info.get('dividendYield', 0) or 0
-            dy, alerta_dy = validar_dy(float(dy_raw))
-            pl = info.get('trailingPE', 0) or 0
-            pvp = info.get('priceToBook', 0) or 0
-            roe = info.get('returnOnEquity', 0) or 0
-            preco_atual = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
-            if preco_atual == 0 and historico_close is not None and hasattr(historico_close, 'iloc') and not historico_close.empty:
-                preco_atual = float(historico_close.iloc[-1])
-            score_dy = min(dy / 0.08, 1) * 4 if dy > 0 else 0
-            score_pl = min(15 / pl if pl > 0 else 0, 1) * 1.5
-            score_pvp = min(2 / pvp if pvp > 0 else 0, 1) * 1.5
-            score_roe = min(roe / 0.20, 1) * 3 if roe > 0 else 0
-            score_bruto = score_dy + score_pl + score_pvp + score_roe
-            score_total = min(score_bruto, 10)
-            is_super = score_bruto > 10
-            return {
-                "ticker": ticker,
-                "nome_empresa": info.get('longName', ticker),
-                "preco_atual": preco_atual,
-                "dy": float(dy),
-                "pl": float(pl),
-                "pvp": float(pvp),
-                "roe": float(roe),
-                "score": score_total,
-                "score_bruto": score_bruto,
-                "super_investimento": is_super,
-                "historico": historico_close,
-                "alerta_dy": alerta_dy
-            }
-        except Exception as e:
-            logger.error(f"Erro ao analisar {ticker}: {e}")
-            return {"ticker": ticker, "error": str(e)}
+            with open(USUARIO_JSON, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return PerfilUsuario(**data)
+        except json.JSONDecodeError as e:
+            logger.error(f"Erro ao decodificar JSON do perfil do usuário: {e}. Usando perfil padrão.")
+            return PerfilUsuario()
+    return PerfilUsuario()
 
-    def explicacao_score(self, analise):
-        motivos = []
-        if analise['dy'] > 0.08:
-            motivos.append("Dividend Yield acima de 8%")
-        if analise['roe'] > 0.15:
-            motivos.append("ROE superior a 15%")
-        if analise['pl'] > 0 and analise['pl'] < 10:
-            motivos.append("P/L abaixo de 10")
-        if analise['pvp'] > 0 and analise['pvp'] < 1:
-            motivos.append("P/VP abaixo de 1 (ação descontada)")
-        if not motivos:
-            motivos.append("Atende critérios mistos de boa performance")
-        return " | ".join(motivos)
-
-# Função de módulo para cache (NÃO método da classe!)
-@st.cache_data(show_spinner="🔄 Analisando mercado, aguarde...")
-def descobrir_oportunidades():
-    agent = RendyFinanceAgent()
-    resultados = []
-    for ticker in LISTA_TICKERS_IBOV:
-        resultado = agent.analisar_ativo(ticker)
-        if 'error' not in resultado and resultado.get('preco_atual', 0) > 0:
-            resultados.append(resultado)
-    return sorted(resultados, key=lambda x: x.get('score', 0), reverse=True)
-
-# =================== UI EXPLICATIVA ===================
-def tooltip(texto):
-    return f"ℹ️ <span style='color:gray;font-size:0.95em'>{texto}</span>"
-
-def render_explicacao_campos():
-    st.markdown("#### O que significa cada indicador?")
-    for key, desc in GLOSSARIO.items():
-        st.markdown(f"- **{key}**: {desc}")
-
-def aviso_privacidade():
-    st.info(
-        "🔒 Seus dados são armazenados apenas localmente no seu navegador/dispositivo para garantir privacidade. "
-        "Você pode apagar seus dados a qualquer momento. Nenhuma informação é compartilhada com terceiros. "
-        "[Política de Privacidade](#politica-de-privacidade)"
-    )
-
-# =================== ABAS PRINCIPAIS ===================
-def aba_simulacao(agent):
-    st.header("🎯 Simulação Personalizada de Investimento")
-    st.markdown("""
-    Aqui você simula um investimento real, escolhendo uma ação e um valor para investir.  
-    <br>
-    <b>O objetivo:</b> Mostrar de forma didática quanto de renda passiva anual é possível conquistar e como cada métrica impacta sua decisão!
-    """, unsafe_allow_html=True)
-    st.info("Dica: Use o simulador para experimentar valores e ações. Clique nos (i) para entender cada campo.")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        ticker = st.selectbox("Escolha uma ação para simular", options=LISTA_TICKERS_IBOV,
-                              help="Selecione uma empresa da bolsa para a simulação.")
-    with col2:
-        st.session_state['valor_simulacao'] = st.number_input(
-            "Quanto deseja investir? (R$)",
-            min_value=100.0, step=100.0, value=st.session_state['valor_simulacao'],
-            help="Digite o valor que pretende investir nesta simulação."
-        )
-
-    if st.button("Simular meu investimento 🚀", type="primary", use_container_width=True):
-        with st.spinner("Analisando sua simulação..."):
-            st.session_state['analise_simulacao'] = agent.analisar_ativo(ticker)
-
-    if st.session_state.get('analise_simulacao'):
-        analise = st.session_state['analise_simulacao']
-        if analise.get("error"):
-            st.error(f"Erro ao analisar: {analise['error']}")
-        else:
-            st.subheader(f"Resultado para {analise['nome_empresa']} ({analise['ticker']})")
-            valor = st.session_state['valor_simulacao']
-            preco = analise["preco_atual"]
-            dy = analise["dy"]
-            roe = analise["roe"]
-            qtd = int(valor // preco) if preco > 0 else 0
-            investido = qtd * preco
-            renda = investido * dy
-            col1, col2, col3, col4, col5 = st.columns(5)
-            col1.metric("Score", f"{analise['score']:.1f}/10", help=GLOSSARIO["Score"])
-            col2.metric("Preço Atual", f"R$ {preco:,.2f}")
-            col3.metric("Div. Yield", f"{dy*100:.2f}%", help=GLOSSARIO["DY"])
-            col4.metric("P/L", f"{analise['pl']:.2f}", help=GLOSSARIO["P/L"])
-            col5.metric("ROE", f"{roe*100:.2f}%", help=GLOSSARIO["ROE"])
-
-            # Mensagem destacada, pluralização e didática (CORRIGIDO AQUI)
-            if qtd == 0:
-                st.warning(f"Com o valor de R$ {valor:,.2f}, não é possível adquirir nenhuma ação de {analise['nome_empresa']} ao preço atual.")
-            else:
-                st.markdown(
-                    f"""
-                    <div style='background: #d4edda; border-left: 5px solid #28a745; padding: 8px; border-radius: 4px;'>
-                    <b>Parabéns!</b> Com seu investimento de <b>R$ {valor:,.2f}</b>, você pode adquirir <b>{qtd} ação{'s' if qtd > 1 else ''}</b>.<br>
-                    Sua renda passiva anual estimada em dividendos será de <b style='color:green'>R$ {renda:,.2f}</b>.<br>
-                    <span style='font-size: 0.95em;'>O cálculo utiliza o Dividend Yield anualizado mais recente disponível. Resultados passados não garantem retornos futuros.</span>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-            if analise.get("alerta_dy"):
-                st.markdown(analise["alerta_dy"], unsafe_allow_html=True)
-
-            if analise.get('super_investimento'):
-                st.info("🔥 Esta ação é classificada como SUPER INVESTIMENTO pelo algoritmo! (i) "
-                        "A pontuação bruta dela ultrapassa 10, ou seja, é ainda mais diferenciada segundo nossos critérios. "
-                        + tooltip(GLOSSARIO["Super Investimento"]))
-
-            # EXPLICABILIDADE XAI
-            st.info(f"🤖 Por que este score? {agent.explicacao_score(analise)}")
-
-            if analise.get('historico') is not None and hasattr(analise['historico'], 'empty') and not analise['historico'].empty:
-                st.markdown("##### Evolução do Preço nos Últimos 12 Meses")
-                st.line_chart(analise['historico'])
-            render_explicacao_campos()
-
-def aba_ranking(agent):
-    st.header("🏆 Ranking de Oportunidades do Mercado")
-    st.markdown("""
-    Aqui você encontra as melhores oportunidades do momento, segundo o algoritmo do Rendy!
-    <br>
-    <b>Como interpretar?</b> O Score combina potencial de dividendos, valorização e preço justo.
-    <br>
-    Dica: Passe o mouse sobre cada coluna para entender os indicadores e clique em uma ação para simular.
-    """, unsafe_allow_html=True)
+def salvar_perfil_usuario(perfil: PerfilUsuario):
+    """Salva o perfil do usuário no arquivo JSON."""
+    os.makedirs(DATA_DIR, exist_ok=True)
     try:
-        oportunidades = descobrir_oportunidades()
-    except Exception as e:
-        st.error("Erro ao carregar ranking: " + str(e))
-        return
-    if not oportunidades:
-        st.error("Não foi possível carregar o ranking agora. Tente novamente.")
-        return
-    df = pd.DataFrame(oportunidades)
-    df['Preço Atual'] = df['preco_atual'].apply(lambda x: f"R$ {x:,.2f}" if x > 0 else "N/A")
-    df['Div. Yield'] = df['dy'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
-    df['P/L'] = df['pl'].apply(lambda x: f"{x:.2f}" if x > 0 else "N/A")
-    df['ROE'] = df['roe'].apply(lambda x: f"{x*100:.2f}%" if x > 0 else "N/A")
-    df['Super Investimento'] = df['super_investimento'].apply(lambda x: '🔥' if x else '')
+        with open(USUARIO_JSON, 'w', encoding='utf-8') as f:
+            json.dump(perfil.__dict__, f, ensure_ascii=False, indent=4)
+    except IOError as e:
+        logger.error(f"Erro ao salvar perfil do usuário: {e}")
 
-    st.dataframe(
-        df[['ticker', 'nome_empresa', 'Preço Atual', 'score', 'Div. Yield', 'P/L', 'ROE', 'Super Investimento']].rename(
-            columns={
-                'ticker':'Ticker', 
-                'nome_empresa':'Empresa', 
-                'score':'Score',
-                'Super Investimento': 'Super Investimento'
-            }),
-        hide_index=True, use_container_width=True,
-        column_config={"Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=10, format='%.1f')}
-    )
-    st.info("A coluna 'Super Investimento' marca ações excepcionais com 🔥, segundo critérios do algoritmo. Veja a explicação completa no glossário abaixo.")
-    render_explicacao_campos()
+def carregar_historico_interacoes() -> List[InteracaoUsuario]:
+    """Carrega o histórico de interações do arquivo JSON."""
+    if os.path.exists(HISTORICO_JSON):
+        try:
+            with open(HISTORICO_JSON, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                historico = []
+                for item in data:
+                    try:
+                        item['timestamp'] = datetime.fromisoformat(item['timestamp']).replace(tzinfo=FUSO_BR)
+                        historico.append(InteracaoUsuario(**item))
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Erro ao carregar item do histórico: {item}. Erro: {e}. Ignorando item.")
+                return historico
+        except json.JSONDecodeError as e:
+            logger.error(f"Erro ao decodificar JSON do histórico: {e}. Retornando lista vazia.")
+            return []
+    return []
 
-def aba_carteira(agent):
-    st.header("💼 Monte sua Carteira de Renda Passiva")
-    st.markdown("""
-    <b>Objetivo:</b> Aqui você pode montar sua carteira de ações escolhidas, distribuir seu capital e ver a projeção de renda passiva total.
-    <br>
-    Dica: Selecione várias ações, defina quanto investir em cada uma e veja o resultado combinado!
-    """, unsafe_allow_html=True)
-    if 'lista_alocada' not in st.session_state:
-        st.session_state['lista_alocada'] = []
-    if 'carteira_em_montagem' not in st.session_state:
-        st.session_state['carteira_em_montagem'] = []
-    
-    # --- NOVO BLOCO: Sugestão Rendy ---
-    with st.expander("💡 Sugestão do Assistente Rendy: Top 10 Dividendos"):
-        st.markdown("Essas são as 10 ações com maiores yields de dividendos agora, selecionadas automaticamente pelo Rendy.")
-        oportunidades = descobrir_oportunidades()
-        top_10_div = sorted(oportunidades, key=lambda x: x['dy'], reverse=True)[:10]
-        top_10_tickers = [x['ticker'] for x in top_10_div]
-        st.write(", ".join(top_10_tickers))
-        if st.button("Adicionar as 10 melhores à minha carteira!", key="btn_add_top10"):
-            st.session_state['carteira_em_montagem'] = [{'ticker': t} for t in top_10_tickers]
-            st.success("Top 10 de dividendos adicionadas à carteira! Você pode ajustar ou remover depois.")
+def adicionar_interacao_historico(interacao: InteracaoUsuario):
+    """Adiciona uma nova interação ao histórico e salva."""
+    historico = carregar_historico_interacoes()
+    historico.append(interacao)
+    os.makedirs(DATA_DIR, exist_ok=True)
+    try:
+        with open(HISTORICO_JSON, 'w', encoding='utf-8') as f:
+            # Converte datetime para string ISO formatável antes de salvar
+            serializable_historico = [
+                {k: v.isoformat() if isinstance(v, datetime) else v for k, v in item.__dict__.items()}
+                for item in historico
+            ]
+            json.dump(serializable_historico, f, ensure_ascii=False, indent=4)
+    except IOError as e:
+        logger.error(f"Erro ao salvar histórico de interações: {e}")
 
-    # --- Seleção tradicional (mantida) ---
-    tickers_add = st.multiselect(
-        "Selecione as ações para sua carteira:",
-        LISTA_TICKERS_IBOV,
-        default=[a['ticker'] for a in st.session_state['carteira_em_montagem']]
-    )
-    if st.button("Adicionar à Carteira", use_container_width=True, key="btn_adicionar"):
-        st.session_state['carteira_em_montagem'] = [{'ticker': t} for t in tickers_add]
-        st.success("Ações adicionadas! Agora defina a alocação para cada uma.")
+# =================== AGENTES DA IA ===================
 
-    total = 0
-    alocacoes = []
-    st.markdown(tooltip("Defina quanto deseja investir em cada ação. Diversificação pode diminuir riscos!"), unsafe_allow_html=True)
-    for item in st.session_state['carteira_em_montagem']:
-        val = st.number_input(
-            f"Valor para {item['ticker']}:",
-            min_value=0.0,
-            key=f"aloc_{item['ticker']}"
+class AgenteBase:
+    """Classe base para todos os agentes."""
+    def __init__(self, nome: str):
+        self.nome = nome
+        logger.info(f"Agente {self.nome} inicializado.")
+
+    def log_atividade(self, atividade: str):
+        """Registra uma atividade do agente."""
+        logger.info(f"[{self.nome}] {atividade}")
+
+class AgenteFinanceiro(AgenteBase):
+    """Agente responsável por coletar e analisar dados financeiros."""
+    def __init__(self):
+        super().__init__("Agente Financeiro")
+
+    def _obter_dados_historicos(self, ticker: str, periodo: str = '1y') -> Optional[pd.DataFrame]:
+        """Obtém dados históricos de um ativo usando yfinance."""
+        try:
+            self.log_atividade(f"Obtendo dados históricos para {ticker} ({periodo})...")
+            ticker_yf = yf.Ticker(ticker)
+            hist = ticker_yf.history(period=period)
+            if hist.empty:
+                logger.warning(f"Nenhum dado histórico encontrado para {ticker}.")
+                return None
+            return hist
+        except Exception as e:
+            logger.error(f"Erro ao obter dados históricos para {ticker}: {e}")
+            return None
+
+    def _calcular_indicadores_tecnicos(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calcula indicadores técnicos básicos (SMA, Volatilidade)."""
+        df['SMA_20'] = df['Close'].rolling(window=20).mean()
+        df['Volatilidade'] = df['Close'].pct_change().rolling(window=20).std() * (252**0.5) # Anualizada
+        return df
+
+    def _analisar_tendencia(self, df: pd.DataFrame) -> str:
+        """Determina a tendência de curto prazo."""
+        if df['Close'].iloc[-1] > df['SMA_20'].iloc[-1]:
+            return "Alta"
+        elif df['Close'].iloc[-1] < df['SMA_20'].iloc[-1]:
+            return "Baixa"
+        return "Consolidação"
+
+    def _identificar_niveis_sr(self, df: pd.DataFrame) -> Tuple[float, float]:
+        """Identifica níveis de suporte e resistência (simplificado)."""
+        # Método simplificado: min/max do período recente
+        periodo_recente = df['Close'].tail(30) # Últimos 30 dias
+        suporte = periodo_recente.min()
+        resistencia = periodo_recente.max()
+        return suporte, resistencia
+
+    def analisar_ativo(self, ticker: str) -> AnaliseAtivo:
+        """Realiza uma análise completa de um ativo."""
+        self.log_atividade(f"Iniciando análise para {ticker}")
+        analise = AnaliseAtivo(ticker=ticker)
+
+        ticker_info = yf.Ticker(ticker)
+        info = ticker_info.info
+
+        analise.nome_empresa = info.get('longName', 'Nome não disponível')
+        analise.preco_atual = info.get('currentPrice', 0.0)
+
+        # Tentativa de obter a mudança percentual e volume
+        try:
+            hist_1d = self._obter_dados_historicos(ticker, period='1d')
+            if hist_1d is not None and not hist_1d.empty:
+                if len(hist_1d) >= 2:
+                    preco_abertura = hist_1d['Open'].iloc[0]
+                    if preco_abertura != 0:
+                        analise.mudanca_percentual_24h = ((analise.preco_atual - preco_abertura) / preco_abertura) * 100
+                analise.volume_24h = hist_1d['Volume'].iloc[-1]
+        except Exception as e:
+            logger.warning(f"Não foi possível obter mudança percentual/volume para {ticker}: {e}")
+
+        df_hist = self._obter_dados_historicos(ticker, period='6m') # Usar um período mais longo para análise técnica
+        if df_hist is not None and not df_hist.empty:
+            df_hist = self._calcular_indicadores_tecnicos(df_hist)
+            analise.tendencia_curto_prazo = self._analisar_tendencia(df_hist)
+            analise.suporte, analise.resistencia = self._identificar_niveis_sr(df_hist)
+            analise.volatilidade_recente = df_hist['Volatilidade'].iloc[-1] if 'Volatilidade' in df_hist.columns else 0.0
+
+        # Simulação de Notícias (poderia ser uma API real no futuro)
+        analise.noticias_relevantes = [
+            f"Notícia 1 sobre {analise.nome_empresa}",
+            f"Notícia 2 sobre {analise.nome_empresa}"
+        ]
+
+        # Calcular Score (exemplo simples de lógica de pontuação)
+        score = 0
+        if analise.tendencia_curto_prazo == "Alta":
+            score += 2
+        elif analise.tendencia_curto_prazo == "Consolidação":
+            score += 1
+
+        if analise.mudanca_percentual_24h > 1: # Ganhos recentes
+            score += 1
+        if analise.mudanca_percentual_24h < -1: # Perdas recentes
+            score -= 1
+
+        # Exemplo: menos volatilidade pode ser um ponto positivo para alguns perfis
+        if analise.volatilidade_recente < 0.3: # Arbitrário
+             score += 0.5
+
+        analise.score = score
+
+        # Determinar recomendação com base no score
+        if score >= 3:
+            analise.recomendacao = "Compra Forte"
+        elif score >= 1:
+            analise.recomendacao = "Compra Moderada"
+        elif score <= -1:
+            analise.recomendacao = "Venda"
+        else:
+            analise.recomendacao = "Manter"
+
+        self.log_atividade(f"Análise para {ticker} concluída. Score: {analise.score}, Recomendação: {analise.recomendacao}")
+        return analise
+
+class AgenteChat(AgenteBase):
+    """Agente responsável por interagir com o usuário e fornecer respostas."""
+    def __init__(self):
+        super().__init__("Agente Chat")
+        self.historico_interacoes: List[InteracaoUsuario] = carregar_historico_interacoes()
+        self.perfil_usuario: PerfilUsuario = carregar_perfil_usuario()
+
+    def gerar_resposta(self, pergunta: str, contexto: Optional[Dict[str, Any]] = None) -> str:
+        """Gera uma resposta baseada na pergunta e contexto."""
+        self.log_atividade(f"Gerando resposta para: '{pergunta}'")
+
+        resposta_gerada = "Desculpe, não entendi sua pergunta. Poderia reformular?"
+        contexto_da_interacao = contexto if contexto is not None else {}
+
+        pergunta_lower = pergunta.lower()
+
+        # Respostas baseadas em regras simples e contexto
+        if "olá" in pergunta_lower or "oi" in pergunta_lower:
+            resposta_gerada = f"Olá, {self.perfil_usuario.nome}! Como posso te ajudar com seus investimentos hoje?"
+        elif "perfil" in pergunta_lower:
+            resposta_gerada = (
+                f"Seu perfil atual é:\n"
+                f"- **Nome:** {self.perfil_usuario.nome}\n"
+                f"- **Nível de Experiência:** {self.perfil_usuario.nivel_experiencia}\n"
+                f"- **Apetite a Risco:** {self.perfil_usuario.apetite_risco}\n"
+                f"- **Objetivos:** {self.perfil_usuario.objetivos}\n"
+                f"- **Capital Inicial:** R${self.perfil_usuario.capital_inicial:,.2f}"
+            )
+        elif "oportunidades" in pergunta_lower:
+            if "analises_oportunidades" in contexto_da_interacao and contexto_da_interacao["analises_oportunidades"]:
+                respostas_oportunidades = ["Aqui estão algumas oportunidades que encontrei:\n"]
+                for analise in contexto_da_interacao["analises_oportunidades"][:5]: # Mostrar top 5
+                    respostas_oportunidades.append(
+                        f"- **{analise.nome_empresa} ({analise.ticker}):** Preço R${analise.preco_atual:,.2f}, "
+                        f"Mudança: {analise.mudanca_percentual_24h:.2f}%, Tendência: {analise.tendencia_curto_prazo}, "
+                        f"Recomendação: {analise.recomendacao} (Score: {analise.score:.1f})"
+                    )
+                resposta_gerada = "\n".join(respostas_oportunidades)
+            else:
+                resposta_gerada = "Ainda não analisei o mercado em busca de oportunidades. Por favor, clique no botão 'Descobrir Oportunidades' na barra lateral."
+        elif "ajuda" in pergunta_lower or "o que você pode fazer" in pergunta_lower:
+            resposta_gerada = (
+                "Eu sou a Rendy AI, sua assistente de investimentos! Posso:\n"
+                "- **Analisar ativos:** Obter dados e indicadores de ações.\n"
+                "- **Descobrir oportunidades:** Identificar ativos com bom potencial.\n"
+                "- **Gerenciar seu perfil:** Configurar suas preferências de investimento.\n"
+                "- **Responder suas perguntas:** Tentar te ajudar com dúvidas gerais sobre o mercado."
+                "\n\nPara começar, você pode me perguntar sobre 'oportunidades' ou 'meu perfil'."
+            )
+        elif "analisar" in pergunta_lower and "ativo" in pergunta_lower:
+            match = re.search(r'(?i)\b[A-Z]{4}\d?\.SA\b', pergunta) # Regex para tickers B3 (ex: PETR4.SA)
+            if match:
+                ticker_solicitado = match.group(0).upper()
+                if "analises_oportunidades" in contexto_da_interacao:
+                    analise_encontrada = next((a for a in contexto_da_interacao["analises_oportunidades"] if a.ticker == ticker_solicitado), None)
+                    if analise_encontrada:
+                        resposta_gerada = (
+                            f"Detalhes para **{analise_encontrada.nome_empresa} ({analise_encontrada.ticker})**:\n"
+                            f"- **Preço Atual:** R${analise_encontrada.preco_atual:,.2f}\n"
+                            f"- **Mudança 24h:** {analise_encontrada.mudanca_percentual_24h:.2f}%\n"
+                            f"- **Volume 24h:** R${analise_encontrada.volume_24h:,.2f}\n"
+                            f"- **Tendência Curto Prazo:** {analise_encontrada.tendencia_curto_prazo}\n"
+                            f"- **Suporte:** R${analise_encontrada.suporte:,.2f}\n"
+                            f"- **Resistência:** R${analise_encontrada.resistencia:,.2f}\n"
+                            f"- **Volatilidade Recente:** {analise_encontrada.volatilidade_recente:.2f}\n"
+                            f"- **Recomendação:** {analise_encontrada.recomendacao} (Score: {analise_encontrada.score:.1f})"
+                        )
+                        if analise_encontrada.noticias_relevantes:
+                            resposta_gerada += "\n- **Notícias Relevantes:** " + ", ".join(analise_encontrada.noticias_relevantes)
+                    else:
+                        resposta_gerada = f"Não encontrei detalhes recentes para o ativo {ticker_solicitado}. Tente descobrir oportunidades primeiro."
+                else:
+                    resposta_gerada = "Para analisar um ativo específico, por favor, me diga o ticker (ex: 'analisar PETR4.SA')."
+            else:
+                resposta_gerada = "Para analisar um ativo, preciso do ticker (ex: 'analisar PETR4.SA')."
+        else:
+            resposta_gerada = "Entendi. Sou uma IA focada em investimentos. Se tiver dúvidas sobre o mercado, me diga! Caso contrário, pergunte sobre 'oportunidades' ou 'perfil'."
+
+        # Salvar interação
+        nova_interacao = InteracaoUsuario(
+            timestamp=datetime.now(FUSO_BR),
+            pergunta=pergunta,
+            resposta=resposta_gerada,
+            contexto=contexto_da_interacao # Salva o contexto relevante
         )
-        alocacoes.append({'ticker': item['ticker'], 'valor_alocado': val})
-        total += val
+        self.historico_interacoes.append(nova_interacao)
+        adicionar_interacao_historico(nova_interacao)
 
-    if st.button("Analisar Carteira", type="primary", use_container_width=True):
-        st.session_state['lista_alocada'] = alocacoes
+        self.log_atividade(f"Resposta gerada: '{resposta_gerada[:50]}...'")
+        return resposta_gerada
 
-    if st.session_state.get('lista_alocada'):
-        total_investido = sum(a['valor_alocado'] for a in st.session_state['lista_alocada'])
-        renda_total = 0
-        linhas = []
-        for item in st.session_state['lista_alocada']:
-            analise = agent.analisar_ativo(item['ticker'])
-            dy = float(analise['dy']) if analise.get('dy') else 0.0
-            preco = analise.get('preco_atual', 0.0)
-            renda = item['valor_alocado'] * dy
-            renda_total += renda
-            linhas.append({
-                "Ticker": item['ticker'],
-                "Preço Atual": f"R$ {preco:,.2f}" if preco > 0 else "N/A",
-                "Valor Investido": f"R$ {item['valor_alocado']:,.2f}",
-                "DY": f"{dy*100:.2f}%",
-                "Renda Passiva": f"R$ {renda:,.2f}",
-                "Super Investimento": "🔥" if analise.get('super_investimento') else "",
-                "Explicação": agent.explicacao_score(analise)
-            })
-        st.subheader("Resumo da Carteira")
-        st.dataframe(pd.DataFrame(linhas), hide_index=True, use_container_width=True)
-        st.success(f"Total investido: R$ {total_investido:,.2f} | Renda passiva anual estimada: R$ {renda_total:,.2f}")
-        if total_investido > 0:
-            st.info(f"Dividend Yield médio da carteira: {renda_total / total_investido * 100:.2f}%")
-        if any(linha["Super Investimento"] for linha in linhas):
-            st.markdown(tooltip(GLOSSARIO["Super Investimento"]), unsafe_allow_html=True)
-        st.info("Coluna 'Explicação' mostra o motivo principal de cada pontuação no score!")
-        render_explicacao_campos()
+class RendyOrchestrator:
+    """Orquestrador que coordena os diferentes agentes."""
+    def __init__(self):
+        self.finance_agent = AgenteFinanceiro()
+        self.chat_agent = AgenteChat()
+        logger.info("RendyOrchestrator inicializado.")
 
-def aba_sobre():
-    st.header("ℹ️ Sobre o Rendy AI & Glossário")
-    st.markdown("""
-    O Rendy AI é seu assessor virtual para investimentos inteligentes e didáticos, pronto para ajudar você a:
-    - Entender indicadores de investimento de modo simples e prático
-    - Simular oportunidades antes de investir
-    - Montar sua carteira de renda passiva
-    - Aprender a analisar oportunidades do mercado
+    def processar_solicitacao_chat(self, pergunta_usuario: str, contexto_chat: Optional[Dict[str, Any]] = None) -> str:
+        """Processa uma solicitação do usuário através do agente de chat."""
+        return self.chat_agent.generar_resposta(pergunta_usuario, contexto_chat)
 
-    <b>Glossário:</b>
-    """, unsafe_allow_html=True)
-    for k, v in GLOSSARIO.items():
-        st.markdown(f"- **{k}**: {v}")
+# =================== CACHE E OTIMIZAÇÕES ===================
 
-    st.subheader("Política de Privacidade", anchor="politica-de-privacidade")
-    st.markdown(
-        """
-        - Nenhum dado pessoal é enviado a servidores externos ou terceiros.
-        - Todos os dados são armazenados apenas localmente no seu dispositivo.
-        - Você pode apagar todos os dados salvos a qualquer momento pelo menu.
-        - Dúvidas? Entre em contato pelo repositório do projeto.
-        """
-    )
+@st.cache_data(show_spinner="🔄 Analisando mercado...", ttl=timedelta(hours=4)) # Cache por 4 horas
+def descobrir_oportunidades_cache(orchestrator: RendyOrchestrator) -> List[AnaliseAtivo]:
+    """Versão cached da descoberta de oportunidades."""
+    logger.info("Iniciando descoberta de oportunidades (pode usar cache).")
+    analises = []
 
-def mini_onboarding():
-    with st.expander("👋 Novo por aqui? Veja como funciona!", expanded=False):
-        st.markdown("""
-        1. Cadastre seu nome e e-mail para uma experiência personalizada.
-        2. Simule investimentos e veja explicações didáticas.
-        3. Monte sua carteira e acompanhe o potencial de renda passiva.
-        4. Todos os dados ficam só com você!
-        """)
+    for ticker in LISTA_TICKERS_IBOV:
+        try:
+            analise = orchestrator.finance_agent.analisar_ativo(ticker)
+            if analise.preco_atual > 0: # Garante que o ativo tem um preço válido
+                analises.append(analise)
+        except Exception as e:
+            logger.error(f"Erro ao analisar ativo {ticker}: {e}")
+            # Continua para o próximo ticker mesmo que um falhe
+
+    # Ordena por score e filtra para incluir apenas os de maior potencial
+    analises_filtradas = sorted(analises, key=lambda x: x.score, reverse=True)
+
+    logger.info(f"Descoberta de oportunidades concluída. Encontradas {len(analises_filtradas)} oportunidades.")
+    return analises_filtradas
+
+# =================== FUNÇÕES DE UTILIDADE PARA UI ===================
+
+def exibir_analise_completa(analise: AnaliseAtivo):
+    """Exibe os detalhes completos de uma análise de ativo em um expander."""
+    with st.expander(f"Detalhes de {analise.nome_empresa} ({analise.ticker}) - Recomendação: **{analise.recomendacao}**"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Preço Atual", f"R${analise.preco_atual:,.2f}")
+            st.metric("Mudança 24h", f"{analise.mudanca_percentual_24h:.2f}%")
+            st.metric("Volume 24h", f"R${analise.volume_24h:,.2f}")
+        with col2:
+            st.metric("Tendência Curto Prazo", analise.tendencia_curto_prazo)
+            st.metric("Suporte", f"R${analise.suporte:,.2f}")
+            st.metric("Resistência", f"R${analise.resistencia:,.2f}")
+        with col3:
+            st.metric("Volatilidade Recente", f"{analise.volatilidade_recente:.2f}")
+            st.metric("Score de Oportunidade", f"{analise.score:.1f}")
+            st.metric("Recomendação", analise.recomendacao)
+
+        st.markdown("---")
+        st.subheader("Notícias Relevantes")
+        if analise.noticias_relevantes:
+            for noticia in analise.noticias_relevantes:
+                st.markdown(f"- {noticia}")
+        else:
+            st.info("Nenhuma notícia relevante encontrada no momento (dados simulados).")
+
+        # Opcional: Gerar um gráfico simples para o ativo
+        df_hist = yf.Ticker(analise.ticker).history(period='3m')
+        if not df_hist.empty:
+            fig = go.Figure(data=[go.Candlestick(x=df_hist.index,
+                                                open=df_hist['Open'],
+                                                high=df_hist['High'],
+                                                low=df_hist['Low'],
+                                                close=df_hist['Close'])])
+            fig.update_layout(title=f'Gráfico de Candlestick de {analise.ticker} (3 meses)',
+                            xaxis_rangeslider_visible=False,
+                            height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Não foi possível gerar o gráfico histórico para este ativo.")
+
+def exibir_historico_chat():
+    """Exibe o histórico de conversas do Streamlit."""
+    st.subheader("Histórico de Conversas")
+    historico = carregar_historico_interacoes()
+    if historico:
+        for i, interacao in enumerate(reversed(historico[-5:])): # Exibe as últimas 5 interações
+            col_pergunta, col_resposta = st.columns([1, 4])
+            with col_pergunta:
+                st.markdown(f"**Você ({interacao.timestamp.strftime('%H:%M')}):**")
+            with col_resposta:
+                st.info(interacao.pergunta)
+
+            col_ia, col_resposta_ia = st.columns([1, 4])
+            with col_ia:
+                st.markdown(f"**Rendy AI:**")
+            with col_resposta_ia:
+                st.success(interacao.resposta)
+            st.markdown("---")
+    else:
+        st.info("Nenhuma interação anterior. Comece a conversar!")
+
+def configurar_perfil_usuario_ui(perfil: PerfilUsuario):
+    """Interface para configurar o perfil do usuário."""
+    st.subheader("⚙️ Configurar Seu Perfil")
+    with st.form("form_perfil_usuario"):
+        novo_nome = st.text_input("Seu Nome", value=perfil.nome)
+        novo_nivel = st.selectbox("Nível de Experiência",
+                                  ["Iniciante", "Intermediário", "Avançado"],
+                                  index=["Iniciante", "Intermediário", "Avançado"].index(perfil.nivel_experiencia))
+        novo_apetite = st.selectbox("Apetite a Risco",
+                                    ["Conservador", "Moderado", "Agressivo"],
+                                    index=["Conservador", "Moderado", "Agressivo"].index(perfil.apetite_risco))
+        novos_objetivos = st.text_area("Seus Objetivos de Investimento", value=perfil.objetivos)
+        novo_capital = st.number_input("Capital Inicial (R$)", value=perfil.capital_inicial, min_value=0.0, format="%.2f")
+
+        submitted = st.form_submit_button("Salvar Perfil")
+        if submitted:
+            perfil.nome = novo_nome
+            perfil.nivel_experiencia = novo_nivel
+            perfil.apetite_risco = novo_apetite
+            perfil.objetivos = novos_objetivos
+            perfil.capital_inicial = novo_capital
+            salvar_perfil_usuario(perfil)
+            st.success("Perfil atualizado com sucesso!")
+            st.session_state.perfil_configurado = perfil # Atualiza o perfil na sessão
+            st.rerun() # Recarrega a página para refletir as mudanças
 
 # =================== MAIN ===================
+
 def main():
-    inicializar_sessao()
-    agent = RendyFinanceAgent()
-    st.title("🤖 Rendy AI - Assessor de Investimentos")
-    st.markdown(
-        "<span style='color:#666;'>Navegue pelas abas abaixo para simular, aprender e investir com inteligência. O app vai te orientar em cada passo!</span>",
-        unsafe_allow_html=True
-    )
-    mini_onboarding()
-    aviso_privacidade()
+    """Função principal da aplicação Streamlit."""
+    orchestrator = RendyOrchestrator()
 
-    # Cadastro rápido se necessário
-    if not st.session_state['nome_usuario']:
-        with st.form("cadastro"):
-            st.subheader("Primeiro, cadastre-se para uma experiência personalizada!")
-            nome = st.text_input("Seu nome")
-            email = st.text_input("Seu melhor email")
-            submitted = st.form_submit_button("Entrar no Rendy AI")
-            if submitted:
-                if not nome.strip() or not validar_email(email):
-                    st.error("Por favor, preencha nome e email válidos!")
-                    return
-                salvar_usuario(nome.strip(), email.strip())
-                st.success(f"Bem-vindo, {nome.split()[0]}! Agora navegue nas abas.")
-                st.rerun()
-        return
+    # Inicializa o estado da sessão para armazenar o perfil e análises
+    if 'perfil_configurado' not in st.session_state:
+        st.session_state.perfil_configurado = carregar_perfil_usuario()
+    if 'analises_oportunidades' not in st.session_state:
+        st.session_state.analises_oportunidades = []
+    if 'chat_messages' not in st.session_state:
+        st.session_state.chat_messages = []
+    if 'chat_input_key' not in st.session_state:
+        st.session_state.chat_input_key = 0 # Para resetar o input do chat
 
-    with st.sidebar:
-        st.markdown("## 👤 Usuário")
-        st.write(f"Bem-vindo, **{st.session_state['nome_usuario']}**!")
-        if st.button("Limpar meus dados e sair", type="secondary"):
-            limpar_usuario()
-        st.markdown("---")
-        st.markdown("- [Repositório GitHub](https://github.com/MarckDigital/RendyAi-App)")
-        st.markdown("- [Política de Privacidade](#politica-de-privacidade)")
+    st.sidebar.title("🤖 Rendy AI")
+    st.sidebar.markdown("---")
 
-    tabs = st.tabs([
-        "🏆 Ranking de Mercado",
-        "🎯 Simulação Personalizada",
-        "💼 Montar Carteira",
-        "ℹ️ Sobre & Glossário"
-    ])
-    with tabs[0]: aba_ranking(agent)
-    with tabs[1]: aba_simulacao(agent)
-    with tabs[2]: aba_carteira(agent)
-    with tabs[3]: aba_sobre()
+    st.sidebar.header("🚀 Ações Rápidas")
+    if st.sidebar.button("✨ Descobrir Oportunidades"):
+        with st.spinner("Buscando e analisando oportunidades no mercado..."):
+            st.session_state.analises_oportunidades = descobrir_oportunidades_cache(orchestrator)
+        st.sidebar.success("Análise de oportunidades concluída!")
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("👤 Seu Perfil")
+    configurar_perfil_usuario_ui(st.session_state.perfil_configurado)
+    st.sidebar.markdown("---")
+
+    st.title("Bem-vindo(a) à Rendy AI! 🤖")
+    st.write("Sua assistente de IA agêntica para investimentos. Explore as funcionalidades na barra lateral.")
+    st.markdown("---")
+
+    tab_chat, tab_oportunidades = st.tabs(["💬 Chat com Rendy AI", "📈 Oportunidades de Investimento"])
+
+    with tab_chat:
+        st.header("Converse com a Rendy AI")
+        st.markdown("Faça suas perguntas sobre investimentos ou peça para analisar algo!")
+
+        # Exibir histórico de mensagens do chat
+        if st.session_state.chat_messages:
+            for message in st.session_state.chat_messages:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+
+        # Input do chat
+        prompt = st.chat_input("Pergunte algo...", key=f"chat_input_{st.session_state.chat_input_key}")
+        if prompt:
+            st.session_state.chat_messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Rendy AI está pensando..."):
+                    # Passa as análises recentes como contexto para o agente de chat
+                    contexto_chat = {"analises_oportunidades": st.session_state.analises_oportunidades}
+                    resposta_ai = orchestrator.processar_solicitacao_chat(prompt, contexto_chat)
+                    st.markdown(resposta_ai)
+                    st.session_state.chat_messages.append({"role": "assistant", "content": resposta_ai})
+
+            # Incrementa a chave para limpar o input
+            st.session_state.chat_input_key += 1
+            st.experimental_rerun() # Recarrega para limpar o input
+
+        exibir_historico_chat() # Exibe o histórico de interações salvo no arquivo
+
+    with tab_oportunidades:
+        st.header("Principais Oportunidades de Investimento")
+        if st.session_state.analises_oportunidades:
+            st.info(f"Última análise realizada em: {datetime.now(FUSO_BR).strftime('%d/%m/%Y %H:%M:%S')}")
+            for analise in st.session_state.analises_oportunidades:
+                exibir_analise_completa(analise)
+        else:
+            st.warning("Nenhuma oportunidade analisada ainda. Clique em '✨ Descobrir Oportunidades' na barra lateral para começar!")
+
+    st.markdown("---")
+    st.markdown("""
+    ### 🔮 Roadmap Futuro
+
+    - **🌐 Integração com Corretoras:** Execução automática de ordens
+    - **📱 App Mobile:** Aplicativo nativo para iOS e Android
+    - **🤝 Aprendizado Federado:** IA que aprende sem comprometer privacidade
+    - **🌍 Expansão Internacional:** Mercados latino-americanos
+    - **🔗 Blockchain Integration:** DeFi e tokenização de ativos
+    - **🎙️ Interface por Voz:** Interação natural com assistente IA
+
+    ---
+
+    **Versão:** MVP 2.0 - Arquitetura Agêntica Refatorada
+    **Última Atualização:** Junho 2025
+    **Tecnologias:** Python, Streamlit, yfinance, Plotly, Pandas
+    """)
 
 if __name__ == "__main__":
     main()
+
