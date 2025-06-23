@@ -1,739 +1,1760 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import os
+import json
+import re
+import logging
+from datetime import datetime, timedelta
+import pytz
+from typing import Dict, List, Optional, Tuple
+import plotly.graph_objects as go
+import plotly.express as px
+from dataclasses import dataclass
+import warnings
+warnings.filterwarnings("ignore")
 
+# =================== CONFIGURAÇÕES E CONSTANTES ===================
+st.set_page_config(
+    page_title="Rendy AI - Plataforma de Investimentos",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-def get_poupanca_anual_return(year):
-    # Dados históricos aproximados da poupança (exemplo, idealmente de uma API ou fonte confiável)
-    # Fonte: https://brasilindicadores.com.br/poupanca/
-    # Considera a regra nova (0.5% a.m. + TR) ou 70% da Selic + TR
-    # Para simplificar, usaremos valores médios anualizados aproximados
-    data = {
-        2024: 7.09, # Estimativa
-        2023: 8.03,
-        2022: 7.90,
-        2021: 2.94,
-        2020: 2.11,
-        2019: 4.26,
-        2018: 4.62,
-        2017: 6.17,
-        2016: 8.30,
-        2015: 8.15,
-        2014: 7.14,
-        2013: 6.20,
-        2012: 7.00, # Mudança de regra em 2012
-        2011: 6.70,
-        2010: 6.70
-    }
-    return data.get(year, 0.0)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+DATA_DIR = 'data'
+USUARIO_JSON = os.path.join(DATA_DIR, 'usuario.json')
+HISTORICO_JSON = os.path.join(DATA_DIR, 'historico_interacoes.json')
+FUSO_BR = pytz.timezone('America/Sao_Paulo')
 
+LISTA_TICKERS_IBOV = [
+    'ABEV3.SA', 'B3SA3.SA', 'BBAS3.SA', 'BBDC4.SA', 'BBSE3.SA', 'BRAP4.SA',
+    'BRFS3.SA', 'BRKM5.SA', 'CCRO3.SA', 'CIEL3.SA', 'CMIG4.SA', 'CPLE6.SA',
+    'CSAN3.SA', 'CSNA3.SA', 'CYRE3.SA', 'ECOR3.SA', 'EGIE3.SA', 'ELET3.SA',
+    'EMBR3.SA', 'ENBR3.SA', 'EQTL3.SA', 'GGBR4.SA', 'GOAU4.SA', 'HAPV3.SA',
+    'HYPE3.SA', 'ITSA4.SA', 'ITUB4.SA', 'JBSS3.SA', 'LREN3.SA', 'MGLU3.SA',
+    'MRFG3.SA', 'MRVE3.SA', 'MULT3.SA', 'NTCO3.SA', 'PCAR3.SA', 'PETR3.SA',
+    'PETR4.SA', 'PRIO3.SA', 'RADL3.SA', 'RAIL3.SA', 'RENT3.SA', 'SANB11.SA',
+    'SBSP3.SA', 'SUZB3.SA', 'TAEE11.SA', 'UGPA3.SA', 'USIM5.SA', 'VALE3.SA',
+    'VIVT3.SA', 'WEGE3.SA', 'YDUQ3.SA'
+]
 
+SETORES_DISPONIVEIS = [
+    'Todos', 'Bancos', 'Energia Elétrica', 'Petróleo e Gás', 'Mineração',
+    'Siderurgia', 'Telecomunicações', 'Varejo', 'Alimentação', 'Construção Civil',
+    'Papel e Celulose', 'Transporte', 'Saúde', 'Educação', 'Tecnologia'
+]
 
+GLOSSARIO = {
+    "Score": "Pontuação até 10 que avalia custo/benefício considerando dividendos (DY), rentabilidade (ROE), preço/lucro (P/L) e preço/valor patrimonial (P/VP). Quanto mais perto de 10, melhor.",
+    "DY": "Dividend Yield: percentual dos dividendos pagos em relação ao preço da ação, anualizado. O app limita DY a no máximo 30% ao ano por padrão para evitar distorções.",
+    "P/L": "Preço dividido pelo lucro por ação. P/L baixo pode indicar ação barata.",
+    "P/VP": "Preço dividido pelo valor patrimonial da empresa por ação. P/VP abaixo de 1 pode indicar ação descontada.",
+    "ROE": "Retorno sobre o patrimônio líquido. Mede a eficiência da empresa em gerar lucros.",
+    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujo valor bruto dos critérios ultrapassou esse limite. São consideradas oportunidades excepcionais segundo o algoritmo.",
+    "Free Cash Flow": "Fluxo de caixa livre: dinheiro que sobra após investimentos necessários. Indica capacidade de pagar dividendos.",
+    "Payout Ratio": "Percentual do lucro distribuído como dividendos. Valores entre 30-60% são considerados saudáveis.",
+    "Debt/Equity": "Relação dívida/patrimônio. Valores altos podem indicar risco financeiro.",
+    "Margem Líquida": "Percentual do lucro líquido sobre a receita. Indica eficiência operacional.",
+    "Crescimento de Dividendos": "Taxa de crescimento histórica dos dividendos. Indica sustentabilidade futura."
+}
 
-def get_tesouro_ipca_anual_return(year):
-    # Dados históricos aproximados do Tesouro IPCA+ (exemplo, idealmente de uma API ou fonte confiável)
-    # A rentabilidade do Tesouro IPCA+ é IPCA + uma taxa. Para simplificar, usaremos uma estimativa anualizada.
-    # Fonte: Tesouro Direto e notícias de mercado
-    data = {
-        2024: 6.5, # Estimativa IPCA + taxa real
-        2023: 8.0,
-        2022: 7.5,
-        2021: 5.0,
-        2020: 3.5,
-        2019: 5.0,
-        2018: 6.0,
-        2017: 7.0,
-        2016: 8.0,
-        2015: 9.0,
-        2014: 7.0,
-        2013: 6.0,
-        2012: 5.5,
-        2011: 6.0,
-        2010: 5.0
-    }
-    return data.get(year, 0.0)
+# Dados simulados para TODAY NEWS (em ambiente real, seria obtido via APIs)
+TODAY_NEWS_DATA = {
+    'data_atualizacao': datetime.now(FUSO_BR).strftime('%d/%m/%Y %H:%M'),
+    'investimentos': [
+        {'nome': 'Ações Dividendos (Top 10)', 'rentabilidade_bruta': 12.5, 'rentabilidade_liquida': 10.0, 'posicao': 1, 'tipo': 'acao'},
+        {'nome': 'Tesouro IPCA+ 2029', 'rentabilidade_bruta': 6.2, 'rentabilidade_liquida': 4.96, 'posicao': 2, 'tipo': 'tesouro'},
+        {'nome': 'CDB 100% CDI', 'rentabilidade_bruta': 13.75, 'rentabilidade_liquida': 9.625, 'posicao': 3, 'tipo': 'cdb'},
+        {'nome': 'CDI', 'rentabilidade_bruta': 13.75, 'rentabilidade_liquida': 9.625, 'posicao': 4, 'tipo': 'cdi'},
+        {'nome': 'Fundos Imobiliários', 'rentabilidade_bruta': 8.5, 'rentabilidade_liquida': 8.5, 'posicao': 5, 'tipo': 'fii'},
+        {'nome': 'Dólar (USD)', 'rentabilidade_bruta': 5.2, 'rentabilidade_liquida': 4.16, 'posicao': 6, 'tipo': 'moeda'},
+        {'nome': 'Ouro', 'rentabilidade_bruta': 3.8, 'rentabilidade_liquida': 3.04, 'posicao': 7, 'tipo': 'commodities'}
+    ],
+    'inflacao': [
+        {'indice': 'IPCA', 'valor': 4.62},
+        {'indice': 'IGP-M', 'valor': 3.15},
+        {'indice': 'INPC', 'valor': 4.77}
+    ]
+}
 
+# =================== DATACLASSES ===================
+@dataclass
+class PerfilUsuario:
+    nome: str
+    email: str
+    tolerancia_risco: str = "moderado"  # conservador, moderado, agressivo
+    horizonte_investimento: str = "medio"  # curto, medio, longo
+    objetivo_principal: str = "renda_passiva"  # renda_passiva, crescimento, preservacao
+    experiencia: str = "iniciante"  # iniciante, intermediario, avancado
+    valor_disponivel: float = 0.0
+    setores_preferidos: List[str] = None
+    
+    def __post_init__(self):
+        if self.setores_preferidos is None:
+            self.setores_preferidos = []
 
+@dataclass
+class AnaliseAtivo:
+    ticker: str
+    nome_empresa: str
+    preco_atual: float
+    dy: float
+    pl: float
+    pvp: float
+    roe: float
+    score: float
+    score_bruto: float
+    super_investimento: bool
+    historico: Optional[pd.Series] = None
+    alerta_dy: str = ""
+    # Novos campos expandidos
+    free_cash_flow: float = 0.0
+    payout_ratio: float = 0.0
+    debt_equity: float = 0.0
+    margem_liquida: float = 0.0
+    crescimento_dividendos: float = 0.0
+    setor: str = ""
+    risco_nivel: str = "medio"
+    recomendacao: str = ""
 
+# =================== UTILITÁRIOS ===================
+def agora_brasilia():
+    return datetime.now(FUSO_BR)
 
+def inicializar_ambiente():
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
 
-def get_cdi_anual_return(year):
-    # Dados históricos aproximados do CDI (exemplo, idealmente de uma API ou fonte confiável)
-    # Fonte: https://investidor10.com.br/indices/cdi/
-    data = {
-        2024: 11.80, # Estimativa
-        2023: 13.24,
-        2022: 12.38,
-        2021: 4.42,
-        2020: 2.76,
-        2019: 5.96,
-        2018: 6.42,
-        2017: 9.93,
-        2016: 14.19,
-        2015: 13.19,
-        2014: 10.81,
-        2013: 8.07,
-        2012: 8.30,
-        2011: 11.80,
-        2010: 10.70
-    }
-    return data.get(year, 0.0)
+def validar_email(email: str) -> bool:
+    return bool(re.match(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$', email))
 
+def validar_dy(dy: float):
+    """Valida e ajusta o Dividend Yield, limitando valores anormais."""
+    if dy is None or dy < 0:
+        return 0.0, "⚠️ O Dividend Yield informado é negativo ou inválido, ajustado para 0."
+    if dy > 1:  # Provavelmente veio em percentual, corrija para proporção
+        dy = dy / 100
+    if dy > 0.3:
+        return 0.3, (
+            """<div style='background: #fff3cd; border-left: 5px solid #ffecb5; padding: 8px;'>
+            <b>⚠️ ATENÇÃO:</b> O Dividend Yield informado para este ativo está acima de <b>30%</b>.<br>
+            Isso pode indicar erro na fonte de dados ou evento não recorrente.<br>
+            Consulte relatórios oficiais antes de investir.
+            </div>"""
+        )
+    return dy, ""
 
-
-
-
-def get_fiis_anual_return(year):
-    # Dados históricos aproximados do IFIX (exemplo, idealmente de uma API ou fonte confiável)
-    # Fonte: B3 e notícias de mercado
-    data = {
-        2024: 10.36, # Estimativa até maio/2025 (Exame)
-        2023: 12.00,
-        2022: -2.30,
-        2021: -2.28,
-        2020: -10.00,
-        2019: 35.98,
-        2018: 10.00,
-        2017: 20.00,
-        2016: 15.00,
-        2015: 5.00,
-        2014: 8.00,
-        2013: 12.00,
-        2012: 10.00,
-        2011: 8.00,
-        2010: 7.00
-    }
-    return data.get(year, 0.0)
-
-
-
-
-
-def get_dolar_anual_return(year):
-    # Dados históricos aproximados do Dólar (USD/BRL) (exemplo, idealmente de uma API ou fonte confiável)
-    # Fonte: yfinance e notícias de mercado
-    data = {
-        2024: 0.99, # Estimativa (Mais Retorno)
-        2023: 7.90,
-        2022: -5.38,
-        2021: 4.93,
-        2020: 29.38,
-        2019: 3.50,
-        2018: 17.00,
-        2017: -1.50,
-        2016: -17.00,
-        2015: 48.00,
-        2014: 13.00,
-        2013: 15.00,
-        2012: 8.00,
-        2011: -11.00,
-        2010: -4.00
-    }
-    return data.get(year, 0.0)
-
-
-
-
-
-def get_ouro_anual_return(year):
-    # Dados históricos aproximados do Ouro (exemplo, idealmente de uma API ou fonte confiável)
-    # Fonte: Bullion Rates, Exame
-    data = {
-        2024: 46.12, # Estimativa GOLD11 (Investidor10)
-        2023: 15.00,
-        2022: 54.00,
-        2021: -7.00,
-        2020: 55.00,
-        2019: 54.00,
-        2018: 10.00,
-        2017: 1.00,
-        2016: 18.00,
-        2015: 10.00,
-        2014: 15.00,
-        2013: -10.00,
-        2012: 10.00,
-        2011: 20.00,
-        2010: 30.00
-    }
-    return data.get(year, 0.0)
-
-
-
-
-
-def get_ibovespa_anual_return(year):
-    # Dados históricos aproximados do Ibovespa (exemplo, idealmente de uma API ou fonte confiável)
-    # Fonte: yfinance e notícias de mercado
-    data = {
-        2024: 15.00, # Estimativa
-        2023: 22.29,
-        2022: -4.64,
-        2021: -11.93,
-        2020: 2.92,
-        2019: 31.58,
-        2018: 15.03,
-        2017: 26.86,
-        2016: 38.94,
-        2015: -13.31,
-        2014: -2.91,
-        2013: -15.50,
-        2012: 7.40,
-        2011: -18.11,
-        2010: 1.00
-    }
-    return data.get(year, 0.0)
-
-
-
-
-
-def get_inflation_data(series_id, start_date, end_date):
-    url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{series_id}/dados?formato=json&dataInicial={start_date}&dataFinal={end_date}"
+def carregar_perfil_usuario() -> Optional[PerfilUsuario]:
+    """Carrega o perfil do usuário do arquivo JSON"""
     try:
-        response = requests.get(url)
-        response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
-        data = response.json()
-        df = pd.DataFrame(data)
-        df["data"] = pd.to_datetime(df["data"], format="%d/%m/%Y")
-        df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
-        df = df.set_index("data")
-        return df
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Erro ao buscar dados da série {series_id} do BCB: {e}")
-        return pd.DataFrame()
+        if os.path.exists(USUARIO_JSON):
+            with open(USUARIO_JSON, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return PerfilUsuario(**data)
+    except Exception as e:
+        logger.error(f"Erro ao carregar perfil: {e}")
+    return None
 
-def calculate_annual_inflation(df):
-    if df.empty:
-        return 0.0
-    # Calcula a inflação anualizada a partir dos dados mensais
-    # Assumindo que o último valor é o mais recente e queremos a variação anual
-    # Isso pode ser mais complexo para um cálculo preciso de 12 meses, mas para MVP, usaremos uma simplificação
-    # Para um cálculo mais preciso, seria necessário somar os valores mensais e converter para anual
-    # Ou usar a função de retorno anualizado de uma série de tempo
+def salvar_perfil_usuario(perfil: PerfilUsuario):
+    """Salva o perfil do usuário no arquivo JSON"""
+    try:
+        inicializar_ambiente()
+        with open(USUARIO_JSON, 'w', encoding='utf-8') as f:
+            json.dump(perfil.__dict__, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Erro ao salvar perfil: {e}")
+
+# =================== AGENTES ESPECIALIZADOS ===================
+
+class RendyFinanceAgent:
+    """Agente responsável pela análise fundamentalista e previsão de dividendos"""
     
-    # Simplificação: pega o último valor disponível e assume como a taxa anual
-    # Isso NÃO é um cálculo de inflação anual acumulada, mas sim o último valor mensal
-    # Para inflação anual acumulada, seria necessário somar os 12 últimos meses
+    def __init__(self):
+        self.cache_analises = {}
     
-    # Exemplo de cálculo de inflação acumulada em 12 meses:
-    # df_anual = df.resample('Y').sum()
-    # return df_anual['valor'].iloc[-1] if not df_anual.empty else 0.0
+    def analisar_ativo(self, ticker: str) -> AnaliseAtivo:
+        """Análise fundamentalista expandida de um ativo"""
+        try:
+            # Cache simples para evitar múltiplas chamadas
+            if ticker in self.cache_analises:
+                return self.cache_analises[ticker]
+            
+            acao = yf.Ticker(ticker)
+            info = acao.info
+            historico = acao.history(period="1y")
+            historico_close = historico['Close'] if not historico.empty else None
+            
+            # Dados básicos
+            dy_raw = info.get('dividendYield', 0) or 0
+            dy, alerta_dy = validar_dy(float(dy_raw))
+            pl = info.get('trailingPE', 0) or 0
+            pvp = info.get('priceToBook', 0) or 0
+            roe = info.get('returnOnEquity', 0) or 0
+            preco_atual = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
+            
+            if preco_atual == 0 and historico_close is not None and not historico_close.empty:
+                preco_atual = float(historico_close.iloc[-1])
+            
+            # Dados expandidos
+            free_cash_flow = info.get('freeCashflow', 0) or 0
+            payout_ratio = info.get('payoutRatio', 0) or 0
+            debt_equity = info.get('debtToEquity', 0) or 0
+            margem_liquida = info.get('profitMargins', 0) or 0
+            setor = info.get('sector', 'Não informado')
+            
+            # Cálculo do score expandido
+            score_dy = min(dy / 0.08, 1) * 4 if dy > 0 else 0
+            score_pl = min(15 / pl if pl > 0 else 0, 1) * 1.5
+            score_pvp = min(2 / pvp if pvp > 0 else 0, 1) * 1.5
+            score_roe = min(roe / 0.20, 1) * 3 if roe > 0 else 0
+            
+            # Novos componentes do score
+            score_fcf = min(free_cash_flow / 1e9 if free_cash_flow > 0 else 0, 1) * 0.5
+            score_payout = 1 if 0.3 <= payout_ratio <= 0.6 else 0.5 if payout_ratio > 0 else 0
+            
+            score_bruto = score_dy + score_pl + score_pvp + score_roe + score_fcf + score_payout
+            score_total = min(score_bruto, 10)
+            is_super = score_bruto > 10
+            
+            # Simulação de crescimento de dividendos (mockado para MVP)
+            crescimento_dividendos = np.random.uniform(0.02, 0.15) if dy > 0 else 0
+            
+            # Classificação de risco
+            risco_nivel = self._classificar_risco(debt_equity, pl, dy)
+            
+            analise = AnaliseAtivo(
+                ticker=ticker,
+                nome_empresa=info.get('longName', ticker),
+                preco_atual=preco_atual,
+                dy=float(dy),
+                pl=float(pl),
+                pvp=float(pvp),
+                roe=float(roe),
+                score=score_total,
+                score_bruto=score_bruto,
+                super_investimento=is_super,
+                historico=historico_close,
+                alerta_dy=alerta_dy,
+                free_cash_flow=float(free_cash_flow),
+                payout_ratio=float(payout_ratio),
+                debt_equity=float(debt_equity),
+                margem_liquida=float(margem_liquida),
+                crescimento_dividendos=crescimento_dividendos,
+                setor=setor,
+                risco_nivel=risco_nivel
+            )
+            
+            self.cache_analises[ticker] = analise
+            return analise
+            
+        except Exception as e:
+            logger.error(f"Erro ao analisar {ticker}: {e}")
+            return AnaliseAtivo(
+                ticker=ticker,
+                nome_empresa=ticker,
+                preco_atual=0,
+                dy=0,
+                pl=0,
+                pvp=0,
+                roe=0,
+                score=0,
+                score_bruto=0,
+                super_investimento=False
+            )
     
-    # Para o MVP, vamos simular um valor anualizado baseado no último mês ou em um valor fixo
-    # A série 433 (IPCA) e 189 (IGP-M) e 188 (INPC) são mensais
-    # Para obter o valor anual, precisamos acumular 12 meses ou usar a variação anual
+    def _classificar_risco(self, debt_equity: float, pl: float, dy: float) -> str:
+        """Classifica o nível de risco do ativo"""
+        pontos_risco = 0
+        
+        if debt_equity > 1.0:
+            pontos_risco += 2
+        elif debt_equity > 0.5:
+            pontos_risco += 1
+            
+        if pl > 25:
+            pontos_risco += 2
+        elif pl > 15:
+            pontos_risco += 1
+            
+        if dy > 0.12:  # DY muito alto pode indicar risco
+            pontos_risco += 1
+            
+        if pontos_risco >= 4:
+            return "alto"
+        elif pontos_risco >= 2:
+            return "medio"
+        else:
+            return "baixo"
     
-    # Para simplificar, vamos pegar o último valor e multiplicar por 12 para uma estimativa anual
-    # OU, se a série já for anual, apenas o último valor
+    def analisar_carteira(self, tickers: List[str], valores: List[float]) -> Dict:
+        """Análise de uma carteira de ativos"""
+        analises = []
+        valor_total = sum(valores)
+        renda_total = 0
+        
+        for ticker, valor in zip(tickers, valores):
+            analise = self.analisar_ativo(ticker)
+            if analise.preco_atual > 0:
+                qtd_acoes = int(valor // analise.preco_atual)
+                valor_investido = qtd_acoes * analise.preco_atual
+                renda_anual = valor_investido * analise.dy
+                renda_total += renda_anual
+                
+                analises.append({
+                    'analise': analise,
+                    'valor_alocado': valor,
+                    'valor_investido': valor_investido,
+                    'qtd_acoes': qtd_acoes,
+                    'renda_anual': renda_anual,
+                    'peso_carteira': valor / valor_total if valor_total > 0 else 0
+                })
+        
+        return {
+            'analises': analises,
+            'valor_total': valor_total,
+            'renda_total_anual': renda_total,
+            'yield_carteira': renda_total / valor_total if valor_total > 0 else 0,
+            'diversificacao': len(set([a['analise'].setor for a in analises]))
+        }
+
+class RendyInvestAgent:
+    """Agente responsável pela personalização e recomendações"""
     
-    # Vamos buscar a série 433 (IPCA), 189 (IGP-M) e 188 (INPC)
-    # A API do BCB retorna valores mensais. Para anualizar, precisamos acumular 12 meses.
+    def __init__(self):
+        self.perfil_usuario = None
     
-    # Exemplo de cálculo de inflação acumulada em 12 meses:
-    # Se o DataFrame tiver dados suficientes, calcula a variação percentual dos últimos 12 meses
-    if len(df) >= 12:
-        # Pega os últimos 12 meses
-        df_12_meses = df.iloc[-12:]
-        # Calcula o produto acumulado (1 + taxa_mensal)
-        accumulated_return = (1 + df_12_meses['valor'] / 100).prod() - 1
-        return accumulated_return * 100 # Retorna em percentual
-    elif not df.empty:
-        # Se não tiver 12 meses, retorna o último valor mensal
-        return df['valor'].iloc[-1]
-    return 0.0
+    def definir_perfil(self, perfil: PerfilUsuario):
+        """Define o perfil do usuário para personalização"""
+        self.perfil_usuario = perfil
+    
+    def recomendar_ativos(self, todos_tickers: List[str], limite: int = 10) -> List[AnaliseAtivo]:
+        """Recomenda ativos baseado no perfil do usuário"""
+        finance_agent = RendyFinanceAgent()
+        analises_completas = []
+        for ticker in todos_tickers:
+            analise = finance_agent.analisar_ativo(ticker)
+            if analise.score > 0:
+                analises_completas.append(analise)
 
+        if not self.perfil_usuario:
+            return sorted(analises_completas, key=lambda x: x.score, reverse=True)[:limite]
+        
+        ativos_filtrados = []
+        
+        for analise in analises_completas:
+            if self._ativo_compativel_perfil(analise):
+                score_ajustado = self._ajustar_score_perfil(analise)
+                analise.score = score_ajustado
+                ativos_filtrados.append(analise)
+        
+        return sorted(ativos_filtrados, key=lambda x: x.score, reverse=True)[:limite]
+    
+    def _ativo_compativel_perfil(self, analise: AnaliseAtivo) -> bool:
+        """Verifica se o ativo é compatível com o perfil do usuário"""
+        perfil = self.perfil_usuario
+        
+        if perfil.tolerancia_risco == "conservador" and analise.risco_nivel == "alto":
+            return False
+        elif perfil.tolerancia_risco == "moderado" and analise.risco_nivel == "alto":
+            return analise.score >= 7
+        
+        if perfil.setores_preferidos and 'Todos' not in perfil.setores_preferidos:
+            if analise.setor not in perfil.setores_preferidos:
+                return len(perfil.setores_preferidos) < 3
+        
+        return True
+    
+    def _ajustar_score_perfil(self, analise: AnaliseAtivo) -> float:
+        """Ajusta o score baseado no perfil do usuário"""
+        score = analise.score
+        perfil = self.perfil_usuario
+        
+        if perfil.objetivo_principal == "renda_passiva":
+            if analise.dy > 0.08:
+                score += 0.5
+        elif perfil.objetivo_principal == "crescimento":
+            if analise.crescimento_dividendos > 0.1:
+                score += 0.5
+        
+        if perfil.experiencia == "iniciante":
+            if analise.risco_nivel == "baixo":
+                score += 0.3
+            elif analise.risco_nivel == "alto":
+                score -= 0.5
+        
+        return min(score, 10)
+    
+    def gerar_sugestao_alocacao(self, valor_total: float, ativos_recomendados: List[AnaliseAtivo]) -> Dict:
+        """Gera sugestão de alocação baseada no perfil"""
+        if not self.perfil_usuario or not ativos_recomendados:
+            return {}
+        
+        perfil = self.perfil_usuario
+        num_ativos = min(len(ativos_recomendados), 5)
+        
+        if perfil.tolerancia_risco == "conservador":
+            pesos = [0.4, 0.25, 0.2, 0.1, 0.05][:num_ativos]
+        elif perfil.tolerancia_risco == "agressivo":
+            pesos = [1/num_ativos] * num_ativos
+        else:
+            pesos = [0.3, 0.25, 0.2, 0.15, 0.1][:num_ativos]
+        
+        soma_pesos = sum(pesos)
+        pesos = [p/soma_pesos for p in pesos]
+        
+        alocacao = {}
+        for i, ativo in enumerate(ativos_recomendados[:num_ativos]):
+            alocacao[ativo.ticker] = valor_total * pesos[i]
+        
+        return alocacao
 
-def get_ipca_anual_return(year):
-    end_date = datetime.now().strftime("%d/%m/%Y")
-    start_date = (datetime.now() - timedelta(days=365*2)).strftime("%d/%m/%Y") # Últimos 2 anos
-    df_ipca = get_inflation_data(433, start_date, end_date) # Série IPCA
-    return calculate_annual_inflation(df_ipca)
+class RendyXAI:
+    """Agente responsável pela explicabilidade e transparência das decisões"""
+    
+    def explicacao_score_detalhada(self, analise: AnaliseAtivo) -> Dict[str, str]:
+        """Gera explicação detalhada do score de um ativo"""
+        explicacoes = {
+            'resumo': '',
+            'fatores_positivos': [],
+            'fatores_negativos': [],
+            'fatores_neutros': [],
+            'recomendacao': '',
+            'riscos': []
+        }
+        
+        if analise.dy > 0.08:
+            explicacoes['fatores_positivos'].append(f"Dividend Yield de {analise.dy:.2%} está acima da média do mercado (8%)")
+        elif analise.dy > 0.05:
+            explicacoes['fatores_neutros'].append(f"Dividend Yield de {analise.dy:.2%} está na média do mercado")
+        else:
+            explicacoes['fatores_negativos'].append(f"Dividend Yield de {analise.dy:.2%} está abaixo da média desejável")
+        
+        if analise.pl > 0 and analise.pl < 15:
+            explicacoes['fatores_positivos'].append(f"P/L de {analise.pl:.1f} indica ação com preço atrativo")
+        elif analise.pl > 25:
+            explicacoes['fatores_negativos'].append(f"P/L de {analise.pl:.1f} pode indicar ação cara")
+        
+        if analise.roe > 0.15:
+            explicacoes['fatores_positivos'].append(f"ROE de {analise.roe:.2%} demonstra boa eficiência da empresa")
+        elif analise.roe < 0.10:
+            explicacoes['fatores_negativos'].append(f"ROE de {analise.roe:.2%} está abaixo do ideal")
+        
+        if analise.risco_nivel == "baixo":
+            explicacoes['fatores_positivos'].append("Classificado como investimento de baixo risco")
+        elif analise.risco_nivel == "alto":
+            explicacoes['riscos'].append("Classificado como investimento de alto risco")
+        
+        if analise.score >= 8:
+            explicacoes['recomendacao'] = "Excelente oportunidade de investimento"
+        elif analise.score >= 6:
+            explicacoes['recomendacao'] = "Boa opção para carteira diversificada"
+        elif analise.score >= 4:
+            explicacoes['recomendacao'] = "Considere com cautela, analise outros fatores"
+        else:
+            explicacoes['recomendacao'] = "Não recomendado no momento atual"
+        
+        return explicacoes
 
-def get_igpm_anual_return(year):
-    end_date = datetime.now().strftime("%d/%m/%Y")
-    start_date = (datetime.now() - timedelta(days=365*2)).strftime("%d/%m/%Y") # Últimos 2 anos
-    df_igpm = get_inflation_data(189, start_date, end_date) # Série IGP-M
-    return calculate_annual_inflation(df_igpm)
+class RendyAutoAgent:
+    """Agente responsável por simulações e automação"""
+    
+    def simular_investimento(self, ticker: str, valor_inicial: float, periodo_anos: int = 5) -> Dict:
+        """Simula investimento com reinvestimento de dividendos"""
+        finance_agent = RendyFinanceAgent()
+        analise = finance_agent.analisar_ativo(ticker)
+        
+        if analise.preco_atual <= 0:
+            return {'erro': 'Não foi possível obter dados do ativo'}
+        
+        qtd_acoes_inicial = int(valor_inicial // analise.preco_atual)
+        valor_investido = qtd_acoes_inicial * analise.preco_atual
+        
+        # Simulação de cenários
+        cenarios = {
+            'conservador': {'crescimento_preco': 0.05, 'crescimento_dividendo': 0.02},
+            'realista': {'crescimento_preco': 0.08, 'crescimento_dividendo': 0.05},
+            'otimista': {'crescimento_preco': 0.12, 'crescimento_dividendo': 0.08}
+        }
+        
+        resultados = {}
+        
+        for nome_cenario, params in cenarios.items():
+            qtd_acoes = qtd_acoes_inicial
+            preco_acao = analise.preco_atual
+            dy_atual = analise.dy
+            
+            historico_anual = []
+            
+            for ano in range(1, periodo_anos + 1):
+                # Crescimento do preço da ação
+                preco_acao *= (1 + params['crescimento_preco'])
+                
+                # Crescimento do dividend yield
+                dy_atual *= (1 + params['crescimento_dividendo'])
+                
+                # Dividendos recebidos no ano
+                dividendos_ano = qtd_acoes * preco_acao * dy_atual
+                
+                # Reinvestimento dos dividendos
+                novas_acoes = int(dividendos_ano // preco_acao)
+                qtd_acoes += novas_acoes
+                
+                valor_carteira = qtd_acoes * preco_acao
+                renda_anual = qtd_acoes * preco_acao * dy_atual
+                
+                historico_anual.append({
+                    'ano': ano,
+                    'qtd_acoes': qtd_acoes,
+                    'preco_acao': preco_acao,
+                    'valor_carteira': valor_carteira,
+                    'renda_anual': renda_anual,
+                    'dividendos_recebidos': dividendos_ano
+                })
+            
+            valor_final = qtd_acoes * preco_acao
+            renda_final_anual = qtd_acoes * preco_acao * dy_atual
+            
+            resultados[nome_cenario] = {
+                'valor_final': valor_final,
+                'renda_anual_final': renda_final_anual,
+                'retorno_total': (valor_final - valor_investido) / valor_investido,
+                'historico': historico_anual
+            }
+        
+        return {
+            'ticker': ticker,
+            'valor_inicial': valor_investido,
+            'qtd_acoes_inicial': qtd_acoes_inicial,
+            'preco_inicial': analise.preco_atual,
+            'dy_inicial': analise.dy,
+            'cenarios': resultados
+        }
 
-def get_inpc_anual_return(year):
-    end_date = datetime.now().strftime("%d/%m/%Y")
-    start_date = (datetime.now() - timedelta(days=365*2)).strftime("%d/%m/%Y") # Últimos 2 anos
-    df_inpc = get_inflation_data(188, start_date, end_date) # Série INPC
-    return calculate_annual_inflation(df_inpc)
+class RendySupportAgent:
+    """Agente de suporte e educação financeira"""
+    
+    def __init__(self):
+        self.faq = {
+            "o que é dividend yield": "Dividend Yield (DY) é o percentual que uma empresa paga em dividendos em relação ao preço de sua ação. Por exemplo, se uma ação custa R$ 100 e paga R$ 8 em dividendos por ano, o DY é de 8%.",
+            "como funciona o score": "Nosso score avalia ações de 0 a 10 considerando: Dividend Yield (peso 4), P/L (peso 1,5), P/VP (peso 1,5), ROE (peso 3) e outros fatores. Quanto maior o score, melhor a oportunidade.",
+            "qual o melhor perfil de risco": "Depende do seu perfil! Conservador: foca em segurança e dividendos estáveis. Moderado: equilibra risco e retorno. Agressivo: busca maior rentabilidade aceitando mais volatilidade.",
+            "como escolher ações": "Use nosso ranking para identificar as melhores oportunidades, considere seu perfil de risco, diversifique entre setores e sempre analise os fundamentos da empresa.",
+            "o que são super investimentos": "São ações que obtiveram score máximo (10) mas cujos fundamentos são tão bons que ultrapassaram esse limite. Representam oportunidades excepcionais segundo nosso algoritmo.",
+            "dividendos são tributados": "No Brasil, dividendos são isentos de Imposto de Renda para pessoa física. Já os Juros sobre Capital Próprio (JCP) têm tributação de 15%.",
+            "quanto investir em dividendos": "Recomenda-se que ações de dividendos componham entre 20% a 60% da carteira, dependendo do seu perfil e objetivos. Sempre mantenha diversificação.",
+            "quando recebo os dividendos": "Os dividendos são pagos conforme cronograma da empresa, geralmente trimestralmente ou semestralmente. Você precisa ser acionista na data ex-dividendos.",
+            "como usar a simulação": "Nossa simulação projeta cenários de investimento considerando reinvestimento de dividendos. Use para entender o potencial de crescimento do seu patrimônio ao longo do tempo.",
+            "o que é reinvestimento": "É usar os dividendos recebidos para comprar mais ações da mesma empresa, potencializando o efeito dos juros compostos e acelerando o crescimento da carteira."
+        }
+    
+    def responder_pergunta(self, pergunta: str) -> str:
+        """Responde perguntas sobre investimentos e o aplicativo"""
+        pergunta_lower = pergunta.lower().strip()
+        
+        # Busca por palavras-chave na pergunta
+        for chave, resposta in self.faq.items():
+            if any(palavra in pergunta_lower for palavra in chave.split()):
+                return resposta
+        
+        # Respostas específicas sobre o aplicativo
+        if any(palavra in pergunta_lower for palavra in ['rendy', 'aplicativo', 'app', 'plataforma']):
+            return "A Rendy AI é uma plataforma inteligente que ajuda você a investir em ações que pagam dividendos. Usamos algoritmos avançados para analisar e ranquear as melhores oportunidades do mercado brasileiro, considerando seu perfil de investidor."
+        
+        if any(palavra in pergunta_lower for palavra in ['segurança', 'dados', 'privacidade']):
+            return "Sua privacidade é nossa prioridade. Não coletamos dados pessoais desnecessários e todas as informações são processadas localmente. Seus dados de perfil ficam armazenados apenas no seu dispositivo."
+        
+        if any(palavra in pergunta_lower for palavra in ['começar', 'iniciar', 'primeiro']):
+            return "Para começar: 1) Preencha seu perfil de investidor, 2) Explore nosso ranking de ações, 3) Use a simulação para entender o potencial, 4) Monte sua carteira com nossa ajuda. Sempre invista apenas o que pode perder!"
+        
+        # Resposta padrão
+        return "Desculpe, não encontrei uma resposta específica para sua pergunta. Tente perguntar sobre: dividend yield, score, perfil de risco, como escolher ações, super investimentos, tributação, simulação ou reinvestimento. Nossa equipe está sempre trabalhando para melhorar o atendimento!"
+    
+    def calcular_renda_objetivo(self, renda_mensal_desejada: float, dy_medio: float = 0.08) -> Dict:
+        """Calcula quanto investir para atingir renda mensal desejada"""
+        renda_anual = renda_mensal_desejada * 12
+        capital_necessario = renda_anual / dy_medio
+        
+        return {
+            'renda_mensal': renda_mensal_desejada,
+            'renda_anual': renda_anual,
+            'capital_necessario': capital_necessario,
+            'dy_considerado': dy_medio
+        }
+    
+    def calcular_aporte_necessario(self, capital_objetivo: float, capital_atual: float, 
+                                 prazo_meses: int, rentabilidade_mensal: float = 0.008) -> Dict:
+        """Calcula aporte mensal necessário para atingir objetivo"""
+        if prazo_meses <= 0:
+            return {'erro': 'Prazo deve ser maior que zero'}
+        
+        # Fórmula de valor futuro com aportes mensais
+        fv_capital_atual = capital_atual * ((1 + rentabilidade_mensal) ** prazo_meses)
+        valor_restante = capital_objetivo - fv_capital_atual
+        
+        if valor_restante <= 0:
+            aporte_mensal = 0
+        else:
+            # PMT = FV / [((1+r)^n - 1) / r]
+            fator = ((1 + rentabilidade_mensal) ** prazo_meses - 1) / rentabilidade_mensal
+            aporte_mensal = valor_restante / fator
+        
+        return {
+            'capital_objetivo': capital_objetivo,
+            'capital_atual': capital_atual,
+            'prazo_meses': prazo_meses,
+            'aporte_mensal': aporte_mensal,
+            'total_aportes': aporte_mensal * prazo_meses,
+            'rentabilidade_mensal': rentabilidade_mensal
+        }
 
-
-
-
-
-def get_market_overview_data():
-    current_year = datetime.now().year
-    last_year = current_year - 1
-
-    # Coleta de dados históricos e do último ano
-    data_last_year = {
-        "Poupança": get_poupanca_anual_return(last_year),
-        "Tesouro IPCA+": get_tesouro_ipca_anual_return(last_year),
-        "CDI/CDB": get_cdi_anual_return(last_year),
-        "FIIs (IFIX)": get_fiis_anual_return(last_year),
-        "Dólar (USD/BRL)": get_dolar_anual_return(last_year),
-        "Ouro": get_ouro_anual_return(last_year),
-        "Ibovespa": get_ibovespa_anual_return(last_year),
-    }
-
-    # Coleta de dados de inflação
-    ipca_last_year = get_ipca_anual_return(last_year)
-    igpm_last_year = get_igpm_anual_return(last_year)
-    inpc_last_year = get_inpc_anual_return(last_year)
-
-    # Previsões para o ano atual (mockadas para MVP)
-    # Em um ambiente real, estas previsões viriam de APIs de mercado ou modelos preditivos
-    data_current_year_forecast = {
-        "Poupança": 7.00, # Exemplo de previsão
-        "Tesouro IPCA+": 6.80,
-        "CDI/CDB": 10.50,
-        "FIIs (IFIX)": 11.00,
-        "Dólar (USD/BRL)": 5.00,
-        "Ouro": 10.00,
-        "Ibovespa": 18.00,
-    }
-    ipca_current_year_forecast = 4.00 # Exemplo de previsão
-    igpm_current_year_forecast = 3.50 # Exemplo de previsão
-    inpc_current_year_forecast = 3.80 # Exemplo de previsão
-
-    # Estruturando os dados para exibição e ranking
-    overview_data = []
-    for invest_type, return_last_year in data_last_year.items():
-        overview_data.append({
-            "Investimento": invest_type,
-            f"Rentabilidade {last_year} (%)": return_last_year,
-            f"Previsão {current_year} (%)": data_current_year_forecast.get(invest_type, 0.0)
-        })
-
-    # Adicionando inflação
-    overview_data.append({
-        "Investimento": "IPCA",
-        f"Rentabilidade {last_year} (%)": ipca_last_year,
-        f"Previsão {current_year} (%)": ipca_current_year_forecast
-    })
-    overview_data.append({
-        "Investimento": "IGP-M",
-        f"Rentabilidade {last_year} (%)": igpm_last_year,
-        f"Previsão {current_year} (%)": igpm_current_year_forecast
-    })
-    overview_data.append({
-        "Investimento": "INPC",
-        f"Rentabilidade {last_year} (%)": inpc_last_year,
-        f"Previsão {current_year} (%)": inpc_current_year_forecast
-    })
-
-    df_overview = pd.DataFrame(overview_data)
-    df_overview = df_overview.sort_values(by=f"Rentabilidade {last_year} (%)", ascending=False).reset_index(drop=True)
-
-    return df_overview, current_year, last_year
-
+class RendyComplianceAgent:
+    """Agente de conformidade e gestão de riscos"""
+    
+    def gerar_disclaimer(self) -> str:
+        """Gera disclaimer de conformidade"""
+        return """
+        **⚠️ IMPORTANTE - DISCLAIMER DE INVESTIMENTOS**
+        
+        As informações fornecidas pela Rendy AI são apenas para fins educacionais e não constituem recomendação de investimento. 
+        
+        • **Riscos**: Todo investimento envolve riscos, incluindo a possibilidade de perda do capital investido.
+        • **Decisão Própria**: As decisões de investimento são de sua inteira responsabilidade.
+        • **Consultoria**: Considere consultar um assessor de investimentos qualificado.
+        • **Dados**: As informações podem conter erros ou estar desatualizadas.
+        • **Tributação**: Consulte um contador sobre aspectos tributários.
+        
+        **A Rendy AI não se responsabiliza por perdas decorrentes do uso destas informações.**
+        """
+    
+    def avaliar_risco_carteira(self, analises_carteira: List[Dict]) -> Dict:
+        """Avalia o risco geral da carteira"""
+        if not analises_carteira:
+            return {'risco': 'indefinido', 'recomendacoes': []}
+        
+        riscos_altos = sum(1 for a in analises_carteira if a['analise'].risco_nivel == 'alto')
+        total_ativos = len(analises_carteira)
+        percentual_alto_risco = riscos_altos / total_ativos
+        
+        setores = set(a['analise'].setor for a in analises_carteira)
+        diversificacao_setorial = len(setores)
+        
+        recomendacoes = []
+        
+        if percentual_alto_risco > 0.5:
+            recomendacoes.append("Carteira com muitos ativos de alto risco. Considere rebalancear.")
+        
+        if diversificacao_setorial < 3:
+            recomendacoes.append("Baixa diversificação setorial. Considere incluir ativos de outros setores.")
+        
+        if total_ativos < 5:
+            recomendacoes.append("Carteira com poucos ativos. Considere diversificar mais.")
+        
+        if percentual_alto_risco > 0.7:
+            nivel_risco = 'muito_alto'
+        elif percentual_alto_risco > 0.4:
+            nivel_risco = 'alto'
+        elif percentual_alto_risco > 0.2:
+            nivel_risco = 'moderado'
+        else:
+            nivel_risco = 'baixo'
+        
+        return {
+            'risco': nivel_risco,
+            'percentual_alto_risco': percentual_alto_risco,
+            'diversificacao_setorial': diversificacao_setorial,
+            'recomendacoes': recomendacoes
+        }
 
 class RendyOrchestrator:
-    """Orquestrador principal que gerencia os agentes e a interface do usuário"""
+    """Orquestrador principal que coordena todos os agentes"""
+    
     def __init__(self):
-        self.perfil_usuario = carregar_perfil_usuario()
         self.finance_agent = RendyFinanceAgent()
         self.invest_agent = RendyInvestAgent()
         self.xai_agent = RendyXAI()
-        self.TODAY_NEWS_DATA = self._fetch_today_news_data()
-        self.historico_interacoes = self._carregar_historico_interacoes()
-
-    def _fetch_today_news_data(self):
-        df_overview, current_year, last_year = get_market_overview_data()
+        self.auto_agent = RendyAutoAgent()
+        self.support_agent = RendySupportAgent()
+        self.compliance_agent = RendyComplianceAgent()
         
-        # Formata os dados para o formato esperado pelo TODAY_NEWS_DATA
-        # Isso é uma adaptação temporária, a estrutura final será mais flexível
-        manchetes = [
-          # Extrai os valores do DataFrame para evitar problemas de aspas aninhadas em f-strings
-        rentabilidade_col = f"Rentabilidade {last_year} (%)"
-        ibovespa_rent_last_year = df_overview.loc[df_overview["Investimento"] == "Ibovespa", rentabilidade_col].iloc[0]
-        dolar_rent_last_year = df_overview.loc[df_overview["Investimento"] == "Dólar (USD/BRL)", rentabilidade_col].iloc[0]
-        ipca_rent_last_year = df_overview.loc[df_overview["Investimento"] == "IPCA", rentabilidade_col].iloc[0]
-        poupanca_rent_last_year = df_overview.loc[df_overview["Investimento"] == "Poupança", rentabilidade_col].iloc[0]
-        fiis_rent_last_year = df_overview.loc[df_overview["Investimento"] == "FIIs (IFIX)", rentabilidade_col].iloc[0]
-        ouro_rent_last_year = df_overview.loc[df_overview["Investimento"] == "Ouro", rentabilidade_col].iloc[0]
-            f"Ibovespa rendeu {ibovespa_rent_last_year:.2f}% em {last_year}.",
-            f"Dólar variou {dolar_rent_last_year:.2f}% em {last_year}.",
-            f"IPCA acumulado em {ipca_rent_last_year:.2f}% em {last_year}."
-        ]
+        # Estado da sessão
+        if 'carteira' not in st.session_state:
+            st.session_state.carteira = []
+        if 'simulacao_cache' not in st.session_state:
+            st.session_state.simulacao_cache = {}
+        if 'perfil_completo' not in st.session_state:
+            st.session_state.perfil_completo = False
+        if 'mostrar_boas_vindas' not in st.session_state:
+            st.session_state.mostrar_boas_vindas = True
+    
+    def run(self):
+        """Executa a aplicação principal"""
+        inicializar_ambiente()
         
-        indices = {
-            "Ibovespa": f"{ibovespa_rent_last_year:.2f}% ({last_year})",
-            "Dólar (USD/BRL)": f"{dolar_rent_last_year:.2f}% ({last_year})",
-            "IPCA": f"{ipca_rent_last_year:.2f}% ({last_year})"
-        }
+        # Verifica se o perfil está completo
+        perfil = carregar_perfil_usuario()
+        if perfil:
+            st.session_state.perfil_completo = True
+            st.session_state.mostrar_boas_vindas = False
+            self.invest_agent.definir_perfil(perfil)
         
-        destaques_renda_fixa = [
-            f"Poupança rendeu {poupanca_rent_last_year:.2f}% em {last_year}.",
-            f"CDI/CDB superou a inflação em {last_year}."
-        ]
+        # Tela de boas-vindas
+        if st.session_state.mostrar_boas_vindas and not st.session_state.perfil_completo:
+            self.tela_boas_vindas()
+            return
         
-        destaques_renda_variavel = [
-            f"FIIs (IFIX) com rentabilidade de {fiis_rent_last_year:.2f}% em {last_year}.",
-            f"Ouro com forte valorização de {ouro_rent_last_year:.2f}% em {last_year}."
-        ]    ]      return {
-            "manchetes": manchetes,
-            "indices": indices,
-            "destaques_renda_fixa": destaques_renda_fixa,
-            "destaques_renda_variavel": destaques_renda_variavel,
-            "df_overview": df_overview,
-            "current_year": current_year,
-            "last_year": last_year
-        }
-
-    def _carregar_historico_interacoes(self):
-        try:
-            if os.path.exists(HISTORICO_JSON):
-                with open(HISTORICO_JSON, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception as e:
-            logger.error(f"Erro ao carregar histórico de interações: {e}")
-        return []
-
-    def _salvar_historico_interacoes(self):
-        try:
-            inicializar_ambiente()
-            with open(HISTORICO_JSON, 'w', encoding='utf-8') as f:
-                json.dump(self.historico_interacoes, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"Erro ao salvar histórico de interações: {e}")
-
-    def exibir_tela_cadastro(self):
-        st.title("Bem-vindo à Rendy AI!")
-        st.subheader("Crie seu perfil para começar a investir de forma inteligente.")
-
-        with st.form("form_cadastro"):
-            nome = st.text_input("Nome Completo", value=self.perfil_usuario.nome if self.perfil_usuario else "")
-            email = st.text_input("E-mail", value=self.perfil_usuario.email if self.perfil_usuario else "")
+        # Tela de perfil obrigatório
+        if not st.session_state.perfil_completo:
+            self.tela_perfil_obrigatorio()
+            return
+        
+        # Interface principal
+        self.interface_principal()
+    
+    def tela_boas_vindas(self):
+        """Tela de boas-vindas com informações de privacidade"""
+        st.markdown("""
+        <div style='text-align: center; padding: 2rem;'>
+            <h1>🤖 Bem-vindo à Rendy AI</h1>
+            <h2>Plataforma de Investimentos</h2>
+            <h3 style='color: #666;'>Sua assistente inteligente para investimentos em dividendos no Brasil</h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            st.markdown("""
+            ### 🔒 Sua Privacidade é Nossa Prioridade
             
+            **Compromisso com a Segurança:**
+            • **Não coletamos dados pessoais** desnecessários
+            • **Processamento local** - suas informações ficam no seu dispositivo
+            • **Sem compartilhamento** de dados com terceiros
+            • **Conformidade com a LGPD** - Lei Geral de Proteção de Dados
+            
+            ### 🎯 O que Oferecemos
+            
+            • **Ranking Inteligente** de ações que pagam dividendos
+            • **Simulações avançadas** de investimento
+            • **Carteira personalizada** baseada no seu perfil
+            • **Assistente IA** para suas dúvidas sobre investimentos
+            
+            ### ⚠️ Importante
+            
+            Esta plataforma é para fins **educacionais e informativos**. Não constitui recomendação de investimento. 
+            Sempre consulte um profissional qualificado antes de investir.
+            """)
+            
+            st.markdown("---")
+            
+            if st.button("🚀 Começar Agora", type="primary", use_container_width=True):
+                st.session_state.mostrar_boas_vindas = False
+                st.rerun()
+    
+    def tela_perfil_obrigatorio(self):
+        """Tela obrigatória para preenchimento do perfil"""
+        st.markdown("""
+        <div style='text-align: center; padding: 1rem;'>
+            <h2>📋 Complete Seu Perfil de Investidor</h2>
+            <p style='color: #666;'>Para oferecer recomendações personalizadas, precisamos conhecer seu perfil.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.form("perfil_usuario"):
             col1, col2 = st.columns(2)
+            
             with col1:
+                nome = st.text_input("Nome Completo*", placeholder="Seu nome")
+                email = st.text_input("E-mail*", placeholder="seu@email.com")
+                
                 tolerancia_risco = st.selectbox(
-                    "Tolerância a Risco",
+                    "Tolerância ao Risco*",
                     ["conservador", "moderado", "agressivo"],
-                    index=["conservador", "moderado", "agressivo"].index(self.perfil_usuario.tolerancia_risco) if self.perfil_usuario else 1
+                    format_func=lambda x: {
+                        "conservador": "Conservador - Priorizo segurança",
+                        "moderado": "Moderado - Equilibro risco e retorno", 
+                        "agressivo": "Agressivo - Aceito mais risco por maior retorno"
+                    }[x]
                 )
-                horizonte_investimento = st.selectbox(
-                    "Horizonte de Investimento",
+                
+                horizonte = st.selectbox(
+                    "Horizonte de Investimento*",
                     ["curto", "medio", "longo"],
-                    index=["curto", "medio", "longo"].index(self.perfil_usuario.horizonte_investimento) if self.perfil_usuario else 1
+                    format_func=lambda x: {
+                        "curto": "Curto prazo (até 2 anos)",
+                        "medio": "Médio prazo (2 a 5 anos)",
+                        "longo": "Longo prazo (mais de 5 anos)"
+                    }[x]
                 )
+            
             with col2:
-                objetivo_principal = st.selectbox(
-                    "Objetivo Principal",
+                objetivo = st.selectbox(
+                    "Objetivo Principal*",
                     ["renda_passiva", "crescimento", "preservacao"],
-                    index=["renda_passiva", "crescimento", "preservacao"].index(self.perfil_usuario.objetivo_principal) if self.perfil_usuario else 0
+                    format_func=lambda x: {
+                        "renda_passiva": "Gerar renda passiva",
+                        "crescimento": "Crescimento do patrimônio",
+                        "preservacao": "Preservação do capital"
+                    }[x]
                 )
+                
                 experiencia = st.selectbox(
-                    "Experiência em Investimentos",
+                    "Experiência em Investimentos*",
                     ["iniciante", "intermediario", "avancado"],
-                    index=["iniciante", "intermediario", "avancado"].index(self.perfil_usuario.experiencia) if self.perfil_usuario else 0
+                    format_func=lambda x: {
+                        "iniciante": "Iniciante - Pouca experiência",
+                        "intermediario": "Intermediário - Alguma experiência",
+                        "avancado": "Avançado - Muita experiência"
+                    }[x]
+                )
+                
+                valor_disponivel = st.number_input(
+                    "Valor Disponível para Investir (R$)",
+                    min_value=0.0,
+                    value=0.0,
+                    step=1000.0,
+                    help="Valor aproximado que pretende investir"
+                )
+                
+                setores = st.multiselect(
+                    "Setores Preferidos (Opcional)",
+                    SETORES_DISPONIVEIS,
+                    help="Deixe em branco ou selecione 'Todos' para não ter preferência"
                 )
             
-            valor_disponivel = st.number_input("Valor Disponível para Investimento (R$)", min_value=0.0, value=self.perfil_usuario.valor_disponivel if self.perfil_usuario else 0.0, format="%.2f")
+            submitted = st.form_submit_button("✅ Salvar Perfil e Continuar", type="primary", use_container_width=True)
             
-            setores_preferidos = st.multiselect(
-                "Setores de Ações Preferidos (Opcional)",
-                SETORES_DISPONIVEIS,
-                default=self.perfil_usuario.setores_preferidos if self.perfil_usuario else []
-            )
-
-            submitted = st.form_submit_button("Salvar Perfil")
             if submitted:
-                if not validar_email(email):
+                if not nome or not email:
+                    st.error("Por favor, preencha nome e e-mail.")
+                elif not validar_email(email):
                     st.error("Por favor, insira um e-mail válido.")
                 else:
-                    novo_perfil = PerfilUsuario(
+                    perfil = PerfilUsuario(
                         nome=nome,
                         email=email,
                         tolerancia_risco=tolerancia_risco,
-                        horizonte_investimento=horizonte_investimento,
-                        objetivo_principal=objetivo_principal,
+                        horizonte_investimento=horizonte,
+                        objetivo_principal=objetivo,
                         experiencia=experiencia,
                         valor_disponivel=valor_disponivel,
-                        setores_preferidos=setores_preferidos
+                        setores_preferidos=setores if setores else ["Todos"]
                     )
-                    salvar_perfil_usuario(novo_perfil)
-                    st.session_state.perfil_carregado = True
-                    st.success("Perfil salvo com sucesso!")
+                    
+                    salvar_perfil_usuario(perfil)
+                    self.invest_agent.definir_perfil(perfil)
+                    st.session_state.perfil_completo = True
+                    
+                    st.success("✅ Perfil salvo com sucesso! Redirecionando...")
                     st.rerun()
-
-    def aba_inicio(self):
-        st.header(f"Olá, {self.perfil_usuario.nome}! 👋")
-        st.subheader("Visão Geral do Mercado")
-
-        df_overview = self.TODAY_NEWS_DATA["df_overview"]
-        current_year = self.TODAY_NEWS_DATA["current_year"]
-        last_year = self.TODAY_NEWS_DATA["last_year"]
-
-        st.markdown(f"### Rentabilidade Anualizada e Previsões ({last_year} e {current_year})")
-        st.write("Compare a rentabilidade dos principais investimentos e índices de inflação:")
-
-        # Tabela de dados
-        st.dataframe(df_overview.set_index("Investimento").style.format("{:.2f}%"), use_container_width=True)
-
-        # Gráfico de barras para rentabilidade do último ano
-        fig_last_year = px.bar(df_overview, x="Investimento", y=f"Rentabilidade {last_year} (%)",
-                               title=f"Rentabilidade Anualizada em {last_year}",
-                               labels={f"Rentabilidade {last_year} (%)": "Rentabilidade Anualizada (%)"},
-                               color=f"Rentabilidade {last_year} (%)",
-                               color_continuous_scale=px.colors.sequential.Plasma)
-        fig_last_year.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_last_year, use_container_width=True)
-
-        # Gráfico de barras para previsões do ano atual
-        fig_current_year = px.bar(df_overview, x="Investimento", y=f"Previsão {current_year} (%)",
-                                  title=f"Previsão de Rentabilidade Anualizada para {current_year}",
-                                  labels={f"Previsão {current_year} (%)": "Previsão de Rentabilidade Anualizada (%)"},
-                                  color=f"Previsão {current_year} (%)",
-                                  color_continuous_scale=px.colors.sequential.Viridis)
-        fig_current_year.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_current_year, use_container_width=True)
-
-        st.markdown("--- ")
-        st.markdown("### Destaques do Mercado")
-        for manchete in self.TODAY_NEWS_DATA["manchetes"]:
-            st.info(manchete)
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Ibovespa", self.TODAY_NEWS_DATA["indices"]["Ibovespa"])
-        with col2:
-            st.metric("Dólar (USD/BRL)", self.TODAY_NEWS_DATA["indices"]["Dólar (USD/BRL)"])
-        with col3:
-            st.metric("IPCA (últimos 12 meses)", self.TODAY_NEWS_DATA["indices"]["IPCA"])
-
-        st.markdown("#### Renda Fixa")
-        for destaque in self.TODAY_NEWS_DATA["destaques_renda_fixa"]:
-            st.success(destaque)
-
-        st.markdown("#### Renda Variável")
-        for destaque in self.TODAY_NEWS_DATA["destaques_renda_variavel"]:
-            st.success(destaque)
-
-    def aba_ranking_inteligente(self):
-        st.subheader("Ranking Inteligente de Ações de Dividendos")
+    
+    def interface_principal(self):
+        """Interface principal da aplicação"""
+        # Header
+        st.markdown("""
+        <div style='text-align: center; padding: 1rem; background: linear-gradient(90deg, #1f4e79, #2d5aa0); color: white; margin-bottom: 2rem; border-radius: 10px;'>
+            <h1>🤖 Rendy AI - Plataforma de Investimentos</h1>
+            <p style='margin: 0; font-size: 1.1em;'>Sua assistente inteligente para investimentos em dividendos no Brasil</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        if not self.perfil_usuario or self.perfil_usuario.valor_disponivel == 0:
-            st.warning("Por favor, complete seu perfil e informe o 'Valor Disponível para Investimento' na aba 'Meu Perfil' para usar o Ranking Inteligente.")
-            return
-
-        # Filtrar tickers com base nos setores preferidos do usuário
-        tickers_para_analise = LISTA_TICKERS_IBOV
-        if self.perfil_usuario.setores_preferidos and 'Todos' not in self.perfil_usuario.setores_preferidos:
-            # Esta lógica precisaria de um mapeamento de ticker para setor, que não temos no MVP
-            # Por enquanto, vamos manter todos os tickers e adicionar um aviso
-            st.info("A filtragem por setores preferidos ainda não está totalmente implementada no MVP. Exibindo todos os tickers do Ibovespa.")
-
-        with st.spinner("Analisando o mercado e gerando recomendações..."):
-            recomendacoes = self.invest_agent.recomendar_ativos(tickers_para_analise, limite=20)
-
-        if recomendacoes:
-            st.success("Análise concluída! Aqui estão as recomendações personalizadas para você:")
-            
-            df_recomendacoes = pd.DataFrame([
-                {
-                    "Ticker": rec.ticker,
-                    "Empresa": rec.nome_empresa,
-                    "Setor": rec.setor,
-                    "Preço Atual": f"R$ {rec.preco_atual:.2f}",
-                    "DY (%)": f"{rec.dy:.2%}",
-                    "P/L": f"{rec.pl:.2f}",
-                    "P/VP": f"{rec.pvp:.2f}",
-                    "ROE (%)": f"{rec.roe:.2%}",
-                    "Score": f"{rec.score:.2f}",
-                    "Risco": rec.risco_nivel.capitalize(),
-                    "Super Investimento": "Sim" if rec.super_investimento else "Não"
-                }
-                for rec in recomendacoes
-            ])
-            st.dataframe(df_recomendacoes, use_container_width=True)
-
-            # Gráfico de barras para o Score
-            fig_score = px.bar(df_recomendacoes.sort_values(by="Score", ascending=False), x="Empresa", y="Score",
-                               title="Score dos Ativos Recomendados",
-                               labels={"Score": "Score de Recomendação"},
-                               color="Score",
-                               color_continuous_scale=px.colors.sequential.Plasma)
-            fig_score.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig_score, use_container_width=True)
-
-            # Gráfico de pizza para distribuição por Risco
-            df_risco = df_recomendacoes["Risco"].value_counts().reset_index()
-            df_risco.columns = ["Nível de Risco", "Contagem"]
-            fig_risco = px.pie(df_risco, values="Contagem", names="Nível de Risco",
-                               title="Distribuição dos Ativos por Nível de Risco",
-                               color_discrete_sequence=px.colors.sequential.RdBu)
-            st.plotly_chart(fig_risco, use_container_width=True)
-
-            st.markdown("--- ")
-            st.subheader("Detalhes e Explicações")
-            
-            for i, rec in enumerate(recomendacoes):
-                with st.expander(f"**{rec.nome_empresa} ({rec.ticker}) - Score: {rec.score:.2f}**"):
-                    st.write(f"**Setor:** {rec.setor}")
-                    st.write(f"**Preço Atual:** R$ {rec.preco_atual:.2f}")
-                    st.write(f"**Dividend Yield (DY):** {rec.dy:.2%}")
-                    st.write(f"**P/L:** {rec.pl:.2f}")
-                    st.write(f"**P/VP:** {rec.pvp:.2f}")
-                    st.write(f"**ROE:** {rec.roe:.2%}")
-                    st.write(f"**Risco:** {rec.risco_nivel.capitalize()}")
-                    if rec.alerta_dy:
-                        st.markdown(rec.alerta_dy, unsafe_allow_html=True)
-                    
-                    st.markdown(self.xai_agent.explicar_score(rec))
-                    
-                    # Gráfico de histórico de preços
-                    if rec.historico is not None and not rec.historico.empty:
-                        fig = px.line(rec.historico, x=rec.historico.index, y=rec.historico.values, title=f"Histórico de Preços de {rec.nome_empresa}")
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.info("Histórico de preços não disponível para este ativo.")
-
-        else:
-            st.warning("Não foi possível gerar recomendações no momento. Tente novamente mais tarde.")
-
-    def aba_simulador_investimento(self):
-        st.subheader("Simulador de Investimentos")
-
-        if not self.perfil_usuario or self.perfil_usuario.valor_disponivel == 0:
-            st.warning("Por favor, complete seu perfil e informe o 'Valor Disponível para Investimento' na aba 'Meu Perfil' para usar o Simulador de Investimentos.")
-            return
-
-        st.info(f"Seu valor disponível para investimento: R$ {self.perfil_usuario.valor_disponivel:,.2f}")
-
-        num_ativos = st.slider("Quantos ativos você deseja simular?", 1, 5, 1)
-
-        tickers_simulacao = []
-        valores_simulacao = []
-
-        for i in range(num_ativos):
-            st.markdown(f"#### Ativo {i+1}")
-            col1, col2 = st.columns(2)
-            with col1:
-                ticker = st.text_input(f"Ticker do Ativo {i+1} (ex: BBAS3.SA)", key=f"ticker_{i}").upper()
-            with col2:
-                valor = st.number_input(f"Valor a Alocar (R$)", min_value=0.0, value=0.0, key=f"valor_{i}", format="%.2f")
-            
-            if ticker and valor > 0:
-                tickers_simulacao.append(ticker)
-                valores_simulacao.append(valor)
-
-        if st.button("Simular Carteira"):
-            if not tickers_simulacao:
-                st.warning("Por favor, adicione pelo menos um ativo para simular.")
-                return
-            
-            with st.spinner("Calculando simulação..."):
-                analise_carteira = self.finance_agent.analisar_carteira(tickers_simulacao, valores_simulacao)
-
-            if analise_carteira["analises"]:
-                st.success("Simulação concluída!")
-                st.markdown(f"### Resumo da Carteira Simulada")
-                st.write(f"**Valor Total Alocado:** R$ {analise_carteira["valor_total"]:,.2f}")
-                st.write(f"**Renda Anual Estimada (Dividendos):** R$ {analise_carteira["renda_total_anual"]:,.2f}")
-                st.write(f"**Dividend Yield da Carteira:** {analise_carteira["yield_carteira"]:.2%}")
-                st.write(f"**Diversificação (Setores):** {analise_carteira["diversificacao"]} setores")
-
-                st.markdown("#### Detalhes por Ativo")
-                df_simulacao = pd.DataFrame([
-                    {
-                        "Ticker": item["analise"].ticker,
-                        "Empresa": item["analise"].nome_empresa,
-                        "Setor": item["analise"].setor,
-                        "Valor Alocado": f"R$ {item["valor_alocado"]:,.2f}",
-                        "Qtd. Ações": item["qtd_acoes"],
-                        "Preço Médio": f"R$ {item["analise"].preco_atual:.2f}",
-                        "Renda Anual (DY)": f"R$ {item["renda_anual"]:,.2f}",
-                        "Peso na Carteira": f"{item["peso_carteira"]:.2%}"
-                    }
-                    for item in analise_carteira["analises"]
-                ])
-                st.dataframe(df_simulacao, use_container_width=True)
-
-                st.markdown("--- ")
-                st.subheader("Gráfico de Renda Anual Estimada por Ativo")
-                fig_renda_anual = px.bar(df_simulacao, x="Ticker", y="Renda Anual (DY)",
-                                        title="Renda Anual Estimada por Ativo",
-                                        labels={"Renda Anual (DY)": "Renda Anual (R$)"},
-                                        color="Renda Anual (DY)",
-                                        color_continuous_scale=px.colors.sequential.Greens)
-                fig_renda_anual.update_layout(xaxis_tickangle=-45)
-                st.plotly_chart(fig_renda_anual, use_container_width=True)
-
-                st.subheader("Gráfico de Alocação por Ativo")
-                fig_alocacao = px.pie(df_simulacao, values="Valor Alocado", names="Ticker", title="Alocação da Carteira por Ativo")
-                st.plotly_chart(fig_alocacao, use_container_width=True)
-
-                st.subheader("Gráfico de Alocação por Setor")
-                df_setor = df_simulacao.groupby("Setor")["Valor Alocado"].sum().reset_index()
-                fig_setor = px.pie(df_setor, values="Valor Alocado", names="Setor", title="Alocação da Carteira por Setor")
-                st.plotly_chart(fig_setor, use_container_width=True)
-
-            else:
-                st.warning("Não foi possível simular a carteira com os ativos fornecidos. Verifique os tickers e valores.")
-
-    def aba_historico_interacoes(self):
-        st.subheader("Histórico de Interações com a Rendy AI")
-        if self.historico_interacoes:
-            for i, interacao in enumerate(reversed(self.historico_interacoes)):
-                st.markdown(f"**Data:** {interacao["data"]}")
-                st.markdown(f"**Tipo:** {interacao["tipo"]}")
-                st.markdown(f"**Detalhes:** {interacao["detalhes"]}")
-                st.markdown("--- ")
-        else:
-            st.info("Nenhuma interação registrada ainda.")
-
-    def run(self):
-        inicializar_ambiente()
-
-        if "perfil_carregado" not in st.session_state:
-            st.session_state.perfil_carregado = False
-
-        if not st.session_state.perfil_carregado:
-            self.perfil_usuario = carregar_perfil_usuario()
-            if self.perfil_usuario:
-                st.session_state.perfil_carregado = True
-            else:
-                self.exibir_tela_cadastro()
-                return
-
-        self.invest_agent.definir_perfil(self.perfil_usuario)
-
-        with st.sidebar:
-            st.image("https://www.rendy.com.br/logo.png", width=150) # Substituir por logo real
-            st.title("Rendy AI")
-            st.write(f"Bem-vindo, {self.perfil_usuario.nome}!")
-            
-            menu_options = ["Início", "Ranking Inteligente", "Simulador de Investimentos", "Histórico de Interações", "Meu Perfil"]
-            choice = st.radio("Navegação", menu_options)
-
-            st.markdown("--- ")
-            if st.button("Atualizar Perfil"):
-                st.session_state.perfil_carregado = False
-                st.rerun()
-            if st.button("Sair / Trocar Usuário"):
-                if os.path.exists(USUARIO_JSON):
-                    os.remove(USUARIO_JSON)
-                st.session_state.perfil_carregado = False
-                st.rerun()
-
-        if choice == "Início":
-            self.aba_inicio()
-        elif choice == "Ranking Inteligente":
+        # Navegação por abas
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            "📊 Ranking Inteligente", 
+            "🎯 Simulação IA", 
+            "💼 Carteira Agêntica", 
+            "🤖 Assistente IA", 
+            "👤 Perfil", 
+            "📚 Glossário"
+        ])
+        
+        with tab1:
             self.aba_ranking_inteligente()
-        elif choice == "Simulador de Investimentos":
-            self.aba_simulador_investimento()
-        elif choice == "Histórico de Interações":
-            self.aba_historico_interacoes()
-        elif choice == "Meu Perfil":
-            self.exibir_tela_cadastro()
+        
+        with tab2:
+            self.aba_simulacao_ia()
+        
+        with tab3:
+            self.aba_carteira_agentica()
+        
+        with tab4:
+            self.aba_assistente_ia()
+        
+        with tab5:
+            self.aba_perfil_usuario()
+        
+        with tab6:
+            self.aba_glossario()
+    
+    def aba_ranking_inteligente(self):
+        """Aba do ranking inteligente com TODAY NEWS"""
+        st.markdown("### 🏆 Ranking Inteligente de Ações")
+        
+        # Explicação do algoritmo
+        with st.expander("ℹ️ Como Funciona Nosso Algoritmo", expanded=False):
+            st.markdown("""
+            **Nosso algoritmo proprietário analisa:**
+            
+            • **Dividend Yield (DY)** - Peso 4: Percentual de dividendos pagos
+            • **Preço/Lucro (P/L)** - Peso 1,5: Indica se a ação está cara ou barata
+            • **Preço/Valor Patrimonial (P/VP)** - Peso 1,5: Relação entre preço e valor contábil
+            • **Return on Equity (ROE)** - Peso 3: Eficiência da empresa em gerar lucros
+            • **Fluxo de Caixa Livre** - Peso 0,5: Capacidade de gerar caixa
+            • **Payout Ratio** - Peso variável: Sustentabilidade dos dividendos
+            
+            **📈 Universo Analisado:** Analisamos as principais ações do Ibovespa, descartando automaticamente 
+            empresas que não pagam dividendos ou têm histórico muito ruim nesta área.
+            
+            **🎯 Score:** Cada ação recebe uma nota de 0 a 10. Ações com fundamentos excepcionais 
+            podem ser classificadas como "Super Investimentos".
+            """)
+        
+        # Vantagens dos dividendos
+        with st.expander("💰 Por que Investir em Ações de Dividendos?", expanded=False):
+            st.markdown("""
+            **Vantagens dos Investimentos em Dividendos:**
+            
+            ✅ **Renda Passiva Regular:** Receba pagamentos periódicos sem vender suas ações
+            
+            ✅ **Isenção de IR:** Dividendos são isentos de Imposto de Renda para pessoa física
+            
+            ✅ **Proteção contra Inflação:** Empresas sólidas tendem a reajustar dividendos
+            
+            ✅ **Juros Compostos:** Reinvestindo dividendos, você acelera o crescimento patrimonial
+            
+            ✅ **Empresas Maduras:** Geralmente são empresas consolidadas e menos voláteis
+            
+            ✅ **Flexibilidade:** Você pode usar a renda ou reinvestir conforme sua estratégia
+            
+            **Comparado a outros investimentos:**
+            • **Poupança/CDB:** Dividendos podem superar a renda fixa no longo prazo
+            • **Fundos Imobiliários:** Ações oferecem maior potencial de crescimento
+            • **Tesouro Direto:** Dividendos não têm prazo de vencimento
+            """)
+        
+        # TODAY NEWS - Panorama de Investimentos
+        st.markdown("### 📰 TODAY NEWS - Panorama de Investimentos")
+        st.caption(f"Última atualização: {TODAY_NEWS_DATA['data_atualizacao']}")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.markdown("#### 📊 Ranking de Rentabilidade Anualizada")
+            
+            df_investimentos = pd.DataFrame(TODAY_NEWS_DATA['investimentos'])
+            df_investimentos = df_investimentos.sort_values('rentabilidade_liquida', ascending=False)
+            
+            # Criar gráfico de barras
+            fig = go.Figure()
+            
+            fig.add_trace(go.Bar(
+                name='Rentabilidade Bruta',
+                x=df_investimentos['nome'],
+                y=df_investimentos['rentabilidade_bruta'],
+                marker_color='lightblue',
+                text=[f"{x:.1f}%" for x in df_investimentos['rentabilidade_bruta']],
+                textposition='auto'
+            ))
+            
+            fig.add_trace(go.Bar(
+                name='Rentabilidade Líquida',
+                x=df_investimentos['nome'],
+                y=df_investimentos['rentabilidade_liquida'],
+                marker_color='darkblue',
+                text=[f"{x:.1f}%" for x in df_investimentos['rentabilidade_liquida']],
+                textposition='auto'
+            ))
+            
+            fig.update_layout(
+                title="Comparativo de Rentabilidades (% ao ano)",
+                xaxis_title="Tipo de Investimento",
+                yaxis_title="Rentabilidade (%)",
+                barmode='group',
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            st.markdown("#### 📈 Índices de Inflação")
+            
+            for inflacao in TODAY_NEWS_DATA['inflacao']:
+                delta_color = "normal" if inflacao['valor'] < 5 else "inverse"
+                st.metric(
+                    label=inflacao['indice'],
+                    value=f"{inflacao['valor']:.2f}%",
+                    delta=f"Meta: 3,25%",
+                    delta_color=delta_color
+                )
+            
+            st.markdown("#### 🏅 Top 3 Investimentos")
+            for i, inv in enumerate(df_investimentos.head(3).to_dict('records')):
+                emoji = ["🥇", "🥈", "🥉"][i]
+                st.markdown(f"""
+                **{emoji} {inv['nome']}**  
+                Líquido: {inv['rentabilidade_liquida']:.1f}%
+                """)
+        
+        # Ranking de ações
+        st.markdown("---")
+        st.markdown("### 🎯 Ranking de Ações por Score")
+        
+        with st.spinner("Analisando ações do mercado..."):
+            # Análise das ações
+            analises = []
+            progress_bar = st.progress(0)
+            
+            for i, ticker in enumerate(LISTA_TICKERS_IBOV[:20]):  # Limita a 20 para performance
+                analise = self.finance_agent.analisar_ativo(ticker)
+                if analise.score > 0:
+                    analises.append(analise)
+                progress_bar.progress((i + 1) / 20)
+            
+            progress_bar.empty()
+            
+            # Ordena por score
+            analises.sort(key=lambda x: x.score, reverse=True)
+            
+            # Exibe o ranking
+            for i, analise in enumerate(analises[:10]):
+                with st.container():
+                    col1, col2, col3, col4, col5 = st.columns([1, 3, 2, 2, 2])
+                    
+                    with col1:
+                        st.markdown(f"**#{i+1}**")
+                    
+                    with col2:
+                        emoji = "⭐" if analise.super_investimento else "📈"
+                        st.markdown(f"**{emoji} {analise.ticker.replace('.SA', '')}**")
+                        st.caption(analise.nome_empresa[:30] + "..." if len(analise.nome_empresa) > 30 else analise.nome_empresa)
+                    
+                    with col3:
+                        score_color = "🟢" if analise.score >= 7 else "🟡" if analise.score >= 5 else "🔴"
+                        st.metric("Score", f"{analise.score:.1f}/10", delta=score_color)
+                    
+                    with col4:
+                        st.metric("DY", f"{analise.dy:.2%}")
+                        st.metric("P/L", f"{analise.pl:.1f}" if analise.pl > 0 else "N/A")
+                    
+                    with col5:
+                        risco_emoji = {"baixo": "🟢", "medio": "🟡", "alto": "🔴"}[analise.risco_nivel]
+                        st.metric("Risco", f"{risco_emoji} {analise.risco_nivel.title()}")
+                        st.metric("Preço", f"R$ {analise.preco_atual:.2f}")
+                    
+                    if analise.alerta_dy:
+                        st.warning(analise.alerta_dy, icon="⚠️")
+                    
+                    st.markdown("---")
+        
+        # Disclaimer
+        st.markdown(self.compliance_agent.gerar_disclaimer())
+    
+    def aba_simulacao_ia(self):
+        """Aba de simulação com IA"""
+        st.markdown("### 🎯 Simulação Inteligente de Investimentos")
+        st.markdown("Simule o crescimento do seu investimento com reinvestimento automático de dividendos.")
+        
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            ticker_input = st.text_input(
+                "Código da Ação",
+                value="ITUB4.SA",
+                help="Digite o código da ação (ex: PETR4.SA, VALE3.SA)"
+            ).upper()
+            
+            valor_inicial = st.number_input(
+                "Valor Inicial (R$)",
+                min_value=100.0,
+                value=10000.0,
+                step=1000.0
+            )
+        
+        with col2:
+            periodo_anos = st.slider(
+                "Período (anos)",
+                min_value=1,
+                max_value=20,
+                value=5
+            )
+            
+            simular = st.button("🚀 Simular Investimento", type="primary")
+        
+        if simular and ticker_input:
+            with st.spinner("Processando simulação..."):
+                resultado = self.auto_agent.simular_investimento(ticker_input, valor_inicial, periodo_anos)
+                
+                if 'erro' in resultado:
+                    st.error(resultado['erro'])
+                else:
+                    st.session_state.simulacao_cache[ticker_input] = resultado
+                    
+                    # Informações básicas
+                    st.success(f"✅ Simulação concluída para {resultado['ticker'].replace('.SA', '')}")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Valor Investido", f"R$ {resultado['valor_inicial']:,.2f}")
+                    with col2:
+                        st.metric("Ações Iniciais", f"{resultado['qtd_acoes_inicial']:,}")
+                    with col3:
+                        st.metric("DY Inicial", f"{resultado['dy_inicial']:.2%}")
+                    
+                    # Resultados por cenário
+                    st.markdown("#### 📊 Resultados por Cenário")
+                    
+                    cenarios_data = []
+                    for nome, dados in resultado['cenarios'].items():
+                        cenarios_data.append({
+                            'Cenário': nome.title(),
+                            'Valor Final': f"R$ {dados['valor_final']:,.2f}",
+                            'Renda Anual': f"R$ {dados['renda_anual_final']:,.2f}",
+                            'Retorno Total': f"{dados['retorno_total']:.1%}"
+                        })
+                    
+                    df_cenarios = pd.DataFrame(cenarios_data)
+                    st.dataframe(df_cenarios, use_container_width=True)
+                    
+                    # Gráfico de evolução
+                    st.markdown("#### 📈 Evolução do Patrimônio")
+                    
+                    fig = go.Figure()
+                    
+                    for nome, dados in resultado['cenarios'].items():
+                        anos = [h['ano'] for h in dados['historico']]
+                        valores = [h['valor_carteira'] for h in dados['historico']]
+                        
+                        fig.add_trace(go.Scatter(
+                            x=anos,
+                            y=valores,
+                            mode='lines+markers',
+                            name=nome.title(),
+                            line=dict(width=3)
+                        ))
+                    
+                    fig.update_layout(
+                        title="Evolução do Valor da Carteira",
+                        xaxis_title="Anos",
+                        yaxis_title="Valor (R$)",
+                        height=400
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Botão para adicionar à carteira
+                    st.markdown("#### 💼 Adicionar à Carteira")
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        st.info("Gostou da simulação? Adicione esta ação à sua carteira para análise detalhada.")
+                    
+                    with col2:
+                        if st.button("➕ Adicionar à Carteira", key="add_simulacao"):
+                            # Adiciona à carteira
+                            nova_acao = {
+                                'ticker': ticker_input,
+                                'valor': valor_inicial
+                            }
+                            
+                            # Verifica se já existe
+                            existe = any(acao['ticker'] == ticker_input for acao in st.session_state.carteira)
+                            
+                            if not existe:
+                                st.session_state.carteira.append(nova_acao)
+                                st.success(f"✅ {ticker_input.replace('.SA', '')} adicionada à carteira!")
+                                st.rerun()
+                            else:
+                                st.warning("Esta ação já está na sua carteira.")
+        
+        # Mostra simulação em cache se existir
+        if st.session_state.simulacao_cache:
+            st.markdown("---")
+            st.markdown("#### 📋 Simulações Recentes")
+            
+            for ticker, resultado in st.session_state.simulacao_cache.items():
+                with st.expander(f"📊 {ticker.replace('.SA', '')} - Última Simulação"):
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        melhor_cenario = max(resultado['cenarios'].items(), key=lambda x: x[1]['valor_final'])
+                        st.metric(
+                            "Melhor Cenário",
+                            melhor_cenario[0].title(),
+                            f"R$ {melhor_cenario[1]['valor_final']:,.2f}"
+                        )
+                    
+                    with col2:
+                        pior_cenario = min(resultado['cenarios'].items(), key=lambda x: x[1]['valor_final'])
+                        st.metric(
+                            "Cenário Conservador",
+                            pior_cenario[0].title(),
+                            f"R$ {pior_cenario[1]['valor_final']:,.2f}"
+                        )
+                    
+                    with col3:
+                        if st.button(f"🗑️ Limpar", key=f"clear_{ticker}"):
+                            del st.session_state.simulacao_cache[ticker]
+                            st.rerun()
+    
+    def aba_carteira_agentica(self):
+        """Aba da carteira agêntica melhorada"""
+        st.markdown("### 💼 Carteira Agêntica")
+        st.markdown("Monte sua carteira de dividendos com a ajuda da nossa IA.")
+        
+        # Seção de sugestões da IA
+        st.markdown("#### 🤖 Sugestões da IA")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.info("Nossa IA pode sugerir ações baseadas no seu perfil de investidor. Clique no botão ao lado para receber recomendações personalizadas.")
+        
+        with col2:
+            if st.button("🎯 Gerar Sugestões", type="primary"):
+                with st.spinner("Analisando mercado e seu perfil..."):
+                    perfil = carregar_perfil_usuario()
+                    if perfil:
+                        self.invest_agent.definir_perfil(perfil)
+                    
+                    sugestoes = self.invest_agent.recomendar_ativos(LISTA_TICKERS_IBOV, limite=8)
+                    
+                    if sugestoes:
+                        st.markdown("##### 📋 Ações Recomendadas para Você")
+                        
+                        for i, analise in enumerate(sugestoes):
+                            with st.container():
+                                col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+                                
+                                with col1:
+                                    emoji = "⭐" if analise.super_investimento else "📈"
+                                    st.markdown(f"**{emoji} {analise.ticker.replace('.SA', '')}**")
+                                    st.caption(analise.nome_empresa[:40] + "..." if len(analise.nome_empresa) > 40 else analise.nome_empresa)
+                                
+                                with col2:
+                                    st.metric("Score", f"{analise.score:.1f}/10")
+                                    st.metric("DY", f"{analise.dy:.2%}")
+                                
+                                with col3:
+                                    st.metric("Preço", f"R$ {analise.preco_atual:.2f}")
+                                    risco_emoji = {"baixo": "🟢", "medio": "🟡", "alto": "🔴"}[analise.risco_nivel]
+                                    st.markdown(f"Risco: {risco_emoji} {analise.risco_nivel.title()}")
+                                
+                                with col4:
+                                    valor_sugerido = st.number_input(
+                                        "Valor (R$)",
+                                        min_value=0.0,
+                                        value=1000.0,
+                                        step=100.0,
+                                        key=f"valor_sug_{analise.ticker}"
+                                    )
+                                    
+                                    if st.button("➕", key=f"add_sug_{analise.ticker}", help="Adicionar à carteira"):
+                                        nova_acao = {
+                                            'ticker': analise.ticker,
+                                            'valor': valor_sugerido
+                                        }
+                                        
+                                        # Verifica se já existe
+                                        existe = any(acao['ticker'] == analise.ticker for acao in st.session_state.carteira)
+                                        
+                                        if not existe:
+                                            st.session_state.carteira.append(nova_acao)
+                                            st.success(f"✅ {analise.ticker.replace('.SA', '')} adicionada!")
+                                            st.rerun()
+                                        else:
+                                            st.warning("Já está na carteira")
+                                
+                                st.markdown("---")
+        
+        # Seção de adição manual
+        st.markdown("#### ✋ Adicionar Manualmente")
+        
+        with st.form("adicionar_acao"):
+            col1, col2, col3 = st.columns([2, 2, 1])
+            
+            with col1:
+                ticker_manual = st.text_input(
+                    "Código da Ação",
+                    placeholder="Ex: PETR4.SA",
+                    help="Digite o código completo da ação"
+                ).upper()
+            
+            with col2:
+                valor_manual = st.number_input(
+                    "Valor a Investir (R$)",
+                    min_value=0.0,
+                    value=1000.0,
+                    step=100.0
+                )
+            
+            with col3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                adicionar_manual = st.form_submit_button("➕ Adicionar", type="primary")
+            
+            if adicionar_manual and ticker_manual:
+                # Verifica se já existe
+                existe = any(acao['ticker'] == ticker_manual for acao in st.session_state.carteira)
+                
+                if not existe:
+                    nova_acao = {
+                        'ticker': ticker_manual,
+                        'valor': valor_manual
+                    }
+                    st.session_state.carteira.append(nova_acao)
+                    st.success(f"✅ {ticker_manual.replace('.SA', '')} adicionada à carteira!")
+                    st.rerun()
+                else:
+                    st.warning("Esta ação já está na sua carteira.")
+        
+        # Exibição da carteira atual
+        if st.session_state.carteira:
+            st.markdown("---")
+            st.markdown("#### 📊 Sua Carteira Atual")
+            
+            # Análise da carteira
+            tickers = [acao['ticker'] for acao in st.session_state.carteira]
+            valores = [acao['valor'] for acao in st.session_state.carteira]
+            
+            with st.spinner("Analisando sua carteira..."):
+                analise_carteira = self.finance_agent.analisar_carteira(tickers, valores)
+                
+                # Métricas gerais
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Valor Total", f"R$ {analise_carteira['valor_total']:,.2f}")
+                
+                with col2:
+                    st.metric("Renda Anual", f"R$ {analise_carteira['renda_total_anual']:,.2f}")
+                
+                with col3:
+                    st.metric("Yield da Carteira", f"{analise_carteira['yield_carteira']:.2%}")
+                
+                with col4:
+                    st.metric("Diversificação", f"{analise_carteira['diversificacao']} setores")
+                
+                # Detalhes por ação
+                st.markdown("##### 📋 Detalhes por Ação")
+                
+                for i, item in enumerate(analise_carteira['analises']):
+                    analise = item['analise']
+                    
+                    with st.container():
+                        col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
+                        
+                        with col1:
+                            emoji = "⭐" if analise.super_investimento else "📈"
+                            st.markdown(f"**{emoji} {analise.ticker.replace('.SA', '')}**")
+                            st.caption(f"Peso: {item['peso_carteira']:.1%}")
+                        
+                        with col2:
+                            st.metric("Valor Alocado", f"R$ {item['valor_alocado']:,.2f}")
+                            st.metric("Qtd. Ações", f"{item['qtd_acoes']:,}")
+                        
+                        with col3:
+                            st.metric("Score", f"{analise.score:.1f}/10")
+                            st.metric("DY", f"{analise.dy:.2%}")
+                        
+                        with col4:
+                            st.metric("Renda Anual", f"R$ {item['renda_anual']:,.2f}")
+                            risco_emoji = {"baixo": "🟢", "medio": "🟡", "alto": "🔴"}[analise.risco_nivel]
+                            st.markdown(f"Risco: {risco_emoji}")
+                        
+                        with col5:
+                            if st.button("🗑️", key=f"remove_{i}", help="Remover da carteira"):
+                                st.session_state.carteira.pop(i)
+                                st.rerun()
+                        
+                        # Explicação XAI
+                        with st.expander(f"🔍 Por que {analise.ticker.replace('.SA', '')}?"):
+                            explicacao = self.xai_agent.explicacao_score_detalhada(analise)
+                            
+                            if explicacao['fatores_positivos']:
+                                st.markdown("**✅ Pontos Positivos:**")
+                                for ponto in explicacao['fatores_positivos']:
+                                    st.markdown(f"• {ponto}")
+                            
+                            if explicacao['fatores_negativos']:
+                                st.markdown("**❌ Pontos de Atenção:**")
+                                for ponto in explicacao['fatores_negativos']:
+                                    st.markdown(f"• {ponto}")
+                            
+                            if explicacao['recomendacao']:
+                                st.info(f"**Recomendação:** {explicacao['recomendacao']}")
+                        
+                        st.markdown("---")
+                
+                # Análise de risco da carteira
+                avaliacao_risco = self.compliance_agent.avaliar_risco_carteira(analise_carteira['analises'])
+                
+                st.markdown("##### ⚖️ Análise de Risco da Carteira")
+                
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    risco_cores = {
+                        'baixo': '🟢',
+                        'moderado': '🟡', 
+                        'alto': '🟠',
+                        'muito_alto': '🔴'
+                    }
+                    st.metric(
+                        "Nível de Risco",
+                        f"{risco_cores[avaliacao_risco['risco']]} {avaliacao_risco['risco'].replace('_', ' ').title()}"
+                    )
+                
+                with col2:
+                    if avaliacao_risco['recomendacoes']:
+                        st.markdown("**Recomendações:**")
+                        for rec in avaliacao_risco['recomendacoes']:
+                            st.markdown(f"• {rec}")
+                    else:
+                        st.success("✅ Sua carteira está bem balanceada!")
+                
+                # Botão para limpar carteira
+                if st.button("🗑️ Limpar Carteira", type="secondary"):
+                    st.session_state.carteira = []
+                    st.rerun()
+        
+        else:
+            st.info("📝 Sua carteira está vazia. Adicione algumas ações para começar a análise!")
+        
+        # Disclaimer
+        st.markdown("---")
+        st.markdown(self.compliance_agent.gerar_disclaimer())
+    
+    def aba_assistente_ia(self):
+        """Aba do assistente IA melhorada"""
+        st.markdown("### 🤖 Assistente IA")
+        st.markdown("Tire suas dúvidas sobre investimentos em dividendos e sobre a plataforma.")
+        
+        # Chat interface
+        if 'chat_history' not in st.session_state:
+            st.session_state.chat_history = []
+        
+        # Exibe histórico do chat
+        for i, (pergunta, resposta) in enumerate(st.session_state.chat_history):
+            with st.container():
+                st.markdown(f"**👤 Você:** {pergunta}")
+                st.markdown(f"**🤖 Rendy AI:** {resposta}")
+                st.markdown("---")
+        
+        # Input para nova pergunta
+        pergunta = st.text_input(
+            "Faça sua pergunta:",
+            placeholder="Ex: Como funciona o dividend yield?",
+            key="chat_input"
+        )
+        
+        col1, col2 = st.columns([1, 4])
+        
+        with col1:
+            enviar = st.button("📤 Enviar", type="primary")
+        
+        if enviar and pergunta:
+            resposta = self.support_agent.responder_pergunta(pergunta)
+            st.session_state.chat_history.append((pergunta, resposta))
+            st.rerun()
+        
+        # Perguntas frequentes
+        st.markdown("---")
+        st.markdown("#### ❓ Perguntas Frequentes")
+        
+        perguntas_freq = [
+            "O que é dividend yield?",
+            "Como funciona o score?",
+            "Qual o melhor perfil de risco?",
+            "Como escolher ações?",
+            "O que são super investimentos?",
+            "Dividendos são tributados?",
+            "Quanto investir em dividendos?",
+            "Como usar a simulação?"
+        ]
+        
+        col1, col2 = st.columns(2)
+        
+        for i, pergunta_freq in enumerate(perguntas_freq):
+            col = col1 if i % 2 == 0 else col2
+            
+            with col:
+                if st.button(f"💬 {pergunta_freq}", key=f"faq_{i}"):
+                    resposta = self.support_agent.responder_pergunta(pergunta_freq)
+                    st.session_state.chat_history.append((pergunta_freq, resposta))
+                    st.rerun()
+        
+        # Calculadoras úteis
+        st.markdown("---")
+        st.markdown("#### 🧮 Calculadoras Úteis")
+        
+        tab1, tab2 = st.tabs(["💰 Renda Objetivo", "📈 Aporte Necessário"])
+        
+        with tab1:
+            st.markdown("##### Calcule quanto investir para atingir sua renda mensal desejada")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                renda_desejada = st.number_input(
+                    "Renda Mensal Desejada (R$)",
+                    min_value=100.0,
+                    value=3000.0,
+                    step=100.0
+                )
+                
+                dy_medio = st.slider(
+                    "Dividend Yield Médio Esperado",
+                    min_value=0.04,
+                    max_value=0.15,
+                    value=0.08,
+                    format="%.1%"
+                )
+            
+            with col2:
+                if st.button("🧮 Calcular Capital Necessário"):
+                    resultado = self.support_agent.calcular_renda_objetivo(renda_desejada, dy_medio)
+                    
+                    st.success(f"""
+                    **Resultado:**
+                    
+                    • **Renda mensal desejada:** R$ {resultado['renda_mensal']:,.2f}
+                    • **Renda anual:** R$ {resultado['renda_anual']:,.2f}
+                    • **Capital necessário:** R$ {resultado['capital_necessario']:,.2f}
+                    • **DY considerado:** {resultado['dy_considerado']:.1%}
+                    """)
+        
+        with tab2:
+            st.markdown("##### Calcule quanto aportar mensalmente para atingir seu objetivo")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                capital_objetivo = st.number_input(
+                    "Capital Objetivo (R$)",
+                    min_value=1000.0,
+                    value=100000.0,
+                    step=1000.0
+                )
+                
+                capital_atual = st.number_input(
+                    "Capital Atual (R$)",
+                    min_value=0.0,
+                    value=10000.0,
+                    step=1000.0
+                )
+                
+                prazo_meses = st.number_input(
+                    "Prazo (meses)",
+                    min_value=1,
+                    value=60,
+                    step=1
+                )
+            
+            with col2:
+                if st.button("🧮 Calcular Aporte Mensal"):
+                    resultado = self.support_agent.calcular_aporte_necessario(
+                        capital_objetivo, capital_atual, prazo_meses
+                    )
+                    
+                    if 'erro' in resultado:
+                        st.error(resultado['erro'])
+                    else:
+                        st.success(f"""
+                        **Resultado:**
+                        
+                        • **Aporte mensal necessário:** R$ {resultado['aporte_mensal']:,.2f}
+                        • **Total de aportes:** R$ {resultado['total_aportes']:,.2f}
+                        • **Prazo:** {resultado['prazo_meses']} meses
+                        • **Rentabilidade considerada:** {resultado['rentabilidade_mensal']:.1%} ao mês
+                        """)
+        
+        # Botão para limpar histórico
+        if st.session_state.chat_history:
+            st.markdown("---")
+            if st.button("🗑️ Limpar Histórico do Chat"):
+                st.session_state.chat_history = []
+                st.rerun()
+    
+    def aba_perfil_usuario(self):
+        """Aba do perfil do usuário"""
+        st.markdown("### 👤 Perfil do Investidor")
+        
+        perfil = carregar_perfil_usuario()
+        
+        if perfil:
+            st.success("✅ Perfil configurado com sucesso!")
+            
+            # Exibe informações atuais
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### 📋 Informações Pessoais")
+                st.info(f"**Nome:** {perfil.nome}")
+                st.info(f"**E-mail:** {perfil.email}")
+                st.info(f"**Valor Disponível:** R$ {perfil.valor_disponivel:,.2f}")
+            
+            with col2:
+                st.markdown("#### 🎯 Perfil de Investimento")
+                st.info(f"**Tolerância ao Risco:** {perfil.tolerancia_risco.title()}")
+                st.info(f"**Horizonte:** {perfil.horizonte_investimento.title()} prazo")
+                st.info(f"**Objetivo:** {perfil.objetivo_principal.replace('_', ' ').title()}")
+                st.info(f"**Experiência:** {perfil.experiencia.title()}")
+            
+            if perfil.setores_preferidos:
+                st.markdown("#### 🏭 Setores Preferidos")
+                setores_str = ", ".join(perfil.setores_preferidos)
+                st.info(setores_str)
+            
+            # Formulário para atualizar
+            st.markdown("---")
+            st.markdown("#### ✏️ Atualizar Perfil")
+            
+            with st.form("atualizar_perfil"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    novo_nome = st.text_input("Nome Completo", value=perfil.nome)
+                    novo_email = st.text_input("E-mail", value=perfil.email)
+                    
+                    nova_tolerancia = st.selectbox(
+                        "Tolerância ao Risco",
+                        ["conservador", "moderado", "agressivo"],
+                        index=["conservador", "moderado", "agressivo"].index(perfil.tolerancia_risco),
+                        format_func=lambda x: {
+                            "conservador": "Conservador - Priorizo segurança",
+                            "moderado": "Moderado - Equilibro risco e retorno", 
+                            "agressivo": "Agressivo - Aceito mais risco por maior retorno"
+                        }[x]
+                    )
+                    
+                    novo_horizonte = st.selectbox(
+                        "Horizonte de Investimento",
+                        ["curto", "medio", "longo"],
+                        index=["curto", "medio", "longo"].index(perfil.horizonte_investimento),
+                        format_func=lambda x: {
+                            "curto": "Curto prazo (até 2 anos)",
+                            "medio": "Médio prazo (2 a 5 anos)",
+                            "longo": "Longo prazo (mais de 5 anos)"
+                        }[x]
+                    )
+                
+                with col2:
+                    novo_objetivo = st.selectbox(
+                        "Objetivo Principal",
+                        ["renda_passiva", "crescimento", "preservacao"],
+                        index=["renda_passiva", "crescimento", "preservacao"].index(perfil.objetivo_principal),
+                        format_func=lambda x: {
+                            "renda_passiva": "Gerar renda passiva",
+                            "crescimento": "Crescimento do patrimônio",
+                            "preservacao": "Preservação do capital"
+                        }[x]
+                    )
+                    
+                    nova_experiencia = st.selectbox(
+                        "Experiência em Investimentos",
+                        ["iniciante", "intermediario", "avancado"],
+                        index=["iniciante", "intermediario", "avancado"].index(perfil.experiencia),
+                        format_func=lambda x: {
+                            "iniciante": "Iniciante - Pouca experiência",
+                            "intermediario": "Intermediário - Alguma experiência",
+                            "avancado": "Avançado - Muita experiência"
+                        }[x]
+                    )
+                    
+                    novo_valor = st.number_input(
+                        "Valor Disponível para Investir (R$)",
+                        min_value=0.0,
+                        value=float(perfil.valor_disponivel),
+                        step=1000.0
+                    )
+                    
+                    novos_setores = st.multiselect(
+                        "Setores Preferidos",
+                        SETORES_DISPONIVEIS,
+                        default=perfil.setores_preferidos
+                    )
+                
+                atualizar = st.form_submit_button("💾 Atualizar Perfil", type="primary")
+                
+                if atualizar:
+                    if not novo_nome or not novo_email:
+                        st.error("Por favor, preencha nome e e-mail.")
+                    elif not validar_email(novo_email):
+                        st.error("Por favor, insira um e-mail válido.")
+                    else:
+                        novo_perfil = PerfilUsuario(
+                            nome=novo_nome,
+                            email=novo_email,
+                            tolerancia_risco=nova_tolerancia,
+                            horizonte_investimento=novo_horizonte,
+                            objetivo_principal=novo_objetivo,
+                            experiencia=nova_experiencia,
+                            valor_disponivel=novo_valor,
+                            setores_preferidos=novos_setores if novos_setores else ["Todos"]
+                        )
+                        
+                        salvar_perfil_usuario(novo_perfil)
+                        self.invest_agent.definir_perfil(novo_perfil)
+                        
+                        st.success("✅ Perfil atualizado com sucesso!")
+                        st.rerun()
+        
+        else:
+            st.error("❌ Perfil não encontrado. Por favor, configure seu perfil.")
+    
+    def aba_glossario(self):
+        """Aba do glossário"""
+        st.markdown("### 📚 Glossário de Investimentos")
+        st.markdown("Entenda os principais termos utilizados na plataforma.")
+        
+        # Busca no glossário
+        busca = st.text_input("🔍 Buscar termo:", placeholder="Digite um termo para buscar...")
+        
+        # Filtra termos se houver busca
+        termos_filtrados = GLOSSARIO
+        if busca:
+            termos_filtrados = {
+                k: v for k, v in GLOSSARIO.items() 
+                if busca.lower() in k.lower() or busca.lower() in v.lower()
+            }
+        
+        # Exibe termos
+        for termo, definicao in termos_filtrados.items():
+            with st.expander(f"📖 {termo}"):
+                st.markdown(definicao)
+        
+        if busca and not termos_filtrados:
+            st.warning("🔍 Nenhum termo encontrado. Tente uma busca diferente.")
+        
+        # Termos adicionais
+        st.markdown("---")
+        st.markdown("#### 💡 Dicas Importantes")
+        
+        st.info("""
+        **📈 Lembre-se:**
+        • Diversifique sempre seus investimentos
+        • Invista apenas o que pode perder
+        • Estude antes de investir
+        • Mantenha disciplina e foco no longo prazo
+        • Reinvista os dividendos para potencializar ganhos
+        """)
+        
+        st.warning("""
+        **⚠️ Atenção:**
+        • Rentabilidade passada não garante resultados futuros
+        • Todo investimento envolve riscos
+        • Consulte sempre um profissional qualificado
+        • Mantenha-se atualizado sobre o mercado
+        """)
 
-
+# =================== EXECUÇÃO PRINCIPAL ===================
 if __name__ == "__main__":
     orchestrator = RendyOrchestrator()
     orchestrator.run()
-
 
