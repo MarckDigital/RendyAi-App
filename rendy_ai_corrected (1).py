@@ -120,6 +120,15 @@ def validar_dy(dy: float):
         )
     return dy, ""
 
+def carregar_perfil_usuario() -> Optional[PerfilUsuario]:
+    try:
+        if os.path.exists(USUARIO_JSON):
+            with open(USUARIO_JSON, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+            return PerfilUsuario(**dados)
+    except Exception as e:
+        logger.error(f"Erro ao carregar perfil do usuário: {e}")
+    return None
 # ========== AGENTES ==========
 # =================== AGENTES ESPECIALIZADOS ===================
 
