@@ -1183,51 +1183,57 @@ class RendyOrchestrator:
     def aba_carteira_agentica(self):
         st.markdown("### 💼 Carteira Agêntica")
         
-        st.markdown("#### 🤖 Sugestões da IA")
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            st.info("Nossa IA pode sugerir ações baseadas no seu perfil de investidor.")
-        with col2:
-            if st.button("🎯 Gerar Sugestões", type="primary"):
-                with st.spinner("Analisando mercado e seu perfil..."):
-                    perfil = carregar_perfil_usuario()
-                    if perfil:
-                        self.invest_agent.definir_perfil(perfil)
-                        sugestoes = self.invest_agent.recomendar_ativos(LISTA_TICKERS_IBOV, limite=8)
-                        
-                        if sugestoes:
-                            st.markdown("##### 📋 Ações Recomendadas para Você")
-                            for i, analise in enumerate(sugestoes):
-                                with st.container():
-                                    col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
-                                    with col1:
-                                        emoji = "⭐" if analise.super_investimento else "📈"
-                                        st.markdown(f"**{emoji} {analise.ticker.replace('.SA', '')}**")
-                                        st.caption(analise.nome_empresa[:40] + "..." if len(analise.nome_empresa) > 40 else analise.nome_empresa)
-                                    with col2:
-                                        st.metric("Score", f"{analise.score:.1f}/10")
-                                        st.metric("DY", f"{analise.dy:.2%}")
-                                    with col3:
-                                        st.metric("Preço", f"R$ {analise.preco_atual:.2f}")
-                                        risco_emoji = {"baixo": "🟢", "medio": "🟡", "alto": "🔴"}[analise.risco_nivel]
-                                        st.markdown(f"Risco: {risco_emoji} {analise.risco_nivel.title()}")
-                                    with col4:
-                                        valor_sugerido = st.number_input(
-                                            "Valor (R$)",
-                                            min_value=0.0,
-                                            value=1000.0,
-                                            step=100.0,
-                                            key=f"valor_sug_{analise.ticker}"
-                                        )
-                                        if st.button("➕", key=f"add_sug_{analise.ticker}"):
-                                            nova_acao = {'ticker': analise.ticker, 'valor': valor_sugerido}
-                                            if not any(acao['ticker'] == analise.ticker for acao in st.session_state.carteira):
-                                                st.session_state.carteira.append(nova_acao)
-                                                st.success(f"✅ {analise.ticker.replace('.SA', '')} adicionada!")
-                                            else:
-                                                st.warning("Já está na carteira")
-                                    st.markdown("---")
-        
+       st.markdown("#### 🤖 Sugestões da IA")
+col1, col2 = st.columns([2, 1])
+with col1:
+    st.info("Nossa IA pode sugerir ações baseadas no seu perfil de investidor.")
+with col2:
+    gerar = st.button("🎯 Gerar Sugestões", type="primary", key="gerar_sugestoes")
+
+# Exibe sugestões FORA das colunas, ocupando toda a largura
+if gerar:
+    with st.spinner("Analisando mercado e seu perfil..."):
+        perfil = carregar_perfil_usuario()
+        if perfil:
+            self.invest_agent.definir_perfil(perfil)
+            sugestoes = self.invest_agent.recomendar_ativos(LISTA_TICKERS_IBOV, limite=8)
+            if sugestoes:
+                st.markdown("##### 📋 Ações Recomendadas para Você")
+                for i, analise in enumerate(sugestoes):
+                    with st.container():
+                        col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+                        with col1:
+                            emoji = "⭐" if analise.super_investimento else "📈"
+                            st.markdown(f"**{emoji} {analise.ticker.replace('.SA', '')}**")
+                            st.caption(analise.nome_empresa[:40] + "..." if len(analise.nome_empresa) > 40 else analise.nome_empresa)
+                        with col2:
+                            st.metric("Score", f"{analise.score:.1f}/10")
+                            st.metric("DY", f"{analise.dy:.2%}")
+                        with col3:
+                            st.metric("Preço", f"R$ {analise.preco_atual:.2f}")
+                            risco_emoji = {"baixo": "🟢", "medio": "🟡", "alto": "🔴"}[analise.risco_nivel]
+                            st.markdown(f"Risco: {risco_emoji} {analise.risco_nivel.title()}")
+                        with col4:
+                            valor_sugerido = st.number_input(
+                                "Valor (R$)",
+                                min_value=0.0,
+                                value=1000.0,
+                                step=100.0,
+                                key=f"valor_sug_{analise.ticker}"
+                            )
+                            if st.button("➕", key=f"add_sug_{analise.ticker}"):
+                                nova_acao = {'ticker': analise.ticker, 'valor': valor_sugerido}
+                                if not any(acao['ticker'] == analise.ticker for acao in st.session_state.carteira):
+                                    st.session_state.carteira.append(nova_acao)
+                                    st.success(f"✅ {analise.ticker.replace('.SA', '')} adicionada!")
+                                else:
+                                    st.warning("Já está na carteira")
+                                    
+                        st.markdown("---")
+            else:
+                st.info("Nenhuma sugestão encontrada.")
+        else:
+            st.warning("Perfil não encontrado.")
         st.markdown("#### ✋ Adicionar Manualmente")
         with st.form("adicionar_acao"):
             col1, col2, col3 = st.columns([2, 2, 1])
