@@ -676,6 +676,8 @@ class RendyOrchestrator:
             st.session_state.mostrar_boas_vindas = True
         if 'historico_interacoes' not in st.session_state:
             st.session_state.historico_interacoes = []
+        if 'sugestoes_carteira' not in st.session_state:
+            st.session_state.sugestoes_carteira = None
     
     def salvar_interacao(self, tipo: str, dados: Dict):
         interacao = {
@@ -875,7 +877,7 @@ class RendyOrchestrator:
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📊 Ranking Inteligente", 
             "🎯 Simulação IA", 
-            "💼 Carteira Agêntica", 
+            "💼 Carteira Agentes IA", 
             "🤖 Assistente IA", 
             "👤 Perfil", 
             "📚 Glossário",
@@ -1181,8 +1183,8 @@ class RendyOrchestrator:
                             st.rerun()
     
     def aba_carteira_agentica(self):
-        st.markdown("### 💼 Carteira Agêntica")
-        
+        st.markdown("### 💼 Carteira Agentes IA")
+
         st.markdown("#### 🤖 Sugestões da IA")
         col1, col2 = st.columns([2, 1])
         with col1:
@@ -1194,40 +1196,44 @@ class RendyOrchestrator:
                     if perfil:
                         self.invest_agent.definir_perfil(perfil)
                         sugestoes = self.invest_agent.recomendar_ativos(LISTA_TICKERS_IBOV, limite=8)
-                        
-                        if sugestoes:
-                            st.markdown("##### 📋 Ações Recomendadas para Você")
-                            for i, analise in enumerate(sugestoes):
-                                with st.container():
-                                    col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
-                                    with col1:
-                                        emoji = "⭐" if analise.super_investimento else "📈"
-                                        st.markdown(f"**{emoji} {analise.ticker.replace('.SA', '')}**")
-                                        st.caption(analise.nome_empresa[:40] + "..." if len(analise.nome_empresa) > 40 else analise.nome_empresa)
-                                    with col2:
-                                        st.metric("Score", f"{analise.score:.1f}/10")
-                                        st.metric("DY", f"{analise.dy:.2%}")
-                                    with col3:
-                                        st.metric("Preço", f"R$ {analise.preco_atual:.2f}")
-                                        risco_emoji = {"baixo": "🟢", "medio": "🟡", "alto": "🔴"}[analise.risco_nivel]
-                                        st.markdown(f"Risco: {risco_emoji} {analise.risco_nivel.title()}")
-                                    with col4:
-                                        valor_sugerido = st.number_input(
-                                            "Valor (R$)",
-                                            min_value=0.0,
-                                            value=1000.0,
-                                            step=100.0,
-                                            key=f"valor_sug_{analise.ticker}"
-                                        )
-                                        if st.button("➕", key=f"add_sug_{analise.ticker}"):
-                                            nova_acao = {'ticker': analise.ticker, 'valor': valor_sugerido}
-                                            if not any(acao['ticker'] == analise.ticker for acao in st.session_state.carteira):
-                                                st.session_state.carteira.append(nova_acao)
-                                                st.success(f"✅ {analise.ticker.replace('.SA', '')} adicionada!")
-                                            else:
-                                                st.warning("Já está na carteira")
-                                    st.markdown("---")
+                        st.session_state.sugestoes_carteira = sugestoes
+                    else:
+                        st.error("Perfil não encontrado. Configure seu perfil na aba 'Perfil'.")
         
+        # Exibir sugestões abaixo do botão, ocupando toda a largura
+        if 'sugestoes_carteira' in st.session_state and st.session_state.sugestoes_carteira:
+            st.markdown("##### 📋 Ações Recomendadas para Você")
+            for i, analise in enumerate(st.session_state.sugestoes_carteira):
+                with st.container():
+                    col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+                    with col1:
+                        emoji = "⭐" if analise.super_investimento else "📈"
+                        st.markdown(f"**{emoji} {analise.ticker.replace('.SA', '')}**")
+                        st.caption(analise.nome_empresa[:40] + "..." if len(analise.nome_empresa) > 40 else analise.nome_empresa)
+                    with col2:
+                        st.metric("Score", f"{analise.score:.1f}/10")
+                        st.metric("DY", f"{analise.dy:.2%}")
+                    with col3:
+                        st.metric("Preço", f"R$ {analise.preco_atual:.2f}")
+                        risco_emoji = {"baixo": "🟢", "medio": "🟡", "alto": "🔴"}[analise.risco_nivel]
+                        st.markdown(f"Risco: {risco_emoji} {analise.risco_nivel.title()}")
+                    with col4:
+                        valor_sugerido = st.number_input(
+                            "Valor (R$)",
+                            min_value=0.0,
+                            value=1000.0,
+                            step=100.0,
+                            key=f"valor_sug_{analise.ticker}"
+                        )
+                        if st.button("➕", key=f"add_sug_{analise.ticker}"):
+                            nova_acao = {'ticker': analise.ticker, 'valor': valor_sugerido}
+                            if not any(acao['ticker'] == analise.ticker for acao in st.session_state.carteira):
+                                st.session_state.carteira.append(nova_acao)
+                                st.success(f"✅ {analise.ticker.replace('.SA', '')} adicionada!")
+                            else:
+                                st.warning("Já está na carteira")
+                    st.markdown("---")
+
         st.markdown("#### ✋ Adicionar Manualmente")
         with st.form("adicionar_acao"):
             col1, col2, col3 = st.columns([2, 2, 1])
@@ -1244,7 +1250,7 @@ class RendyOrchestrator:
                     st.success(f"✅ {ticker_manual.replace('.SA', '')} adicionada à carteira!")
                 else:
                     st.warning("Esta ação já está na sua carteira.")
-        
+
         if st.session_state.carteira:
             st.markdown("---")
             st.markdown("#### 📊 Sua Carteira Atual")
@@ -1544,7 +1550,7 @@ class RendyOrchestrator:
     def aba_sobre(self):
         st.markdown("### ℹ️ Sobre a Rendy AI")
         st.markdown("""
-        #### 🤖 Plataforma de IA Agêntica para Investimentos
+        #### 🤖 Plataforma de Agentes IA para Investimentos
         
         **Nossa Missão:**  
         Capacitar investidores iniciantes a construir patrimônio e renda passiva de forma inteligente e educativa.
