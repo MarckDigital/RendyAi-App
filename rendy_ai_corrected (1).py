@@ -14,7 +14,6 @@ import plotly.express as px
 from dataclasses import dataclass
 import warnings
 import concurrent.futures
-from streamlit.components.v1 import html
 import time
 
 warnings.filterwarnings("ignore")
@@ -68,7 +67,7 @@ GLOSSARIO = {
     "P/L": "Preço dividido pelo lucro por ação. P/L baixo pode indicar ação barata.",
     "P/VP": "Preço dividido pelo valor patrimonial da empresa por ação. P/VP abaixo de 1 pode indicar ação descontada.",
     "ROE": "Retorno sobre o patrimônio líquido. Mede a eficiência da empresa em gerar lucros.",
-    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujo valor bruto dos critérios ultrapassou esse limite. São consideradas oportunidades excepcionais segundo o algoritmo.",
+    "Super Investimento": "Ações que atingiram a pontuação máxima de 10 no score, mas cujos fundamentos são tão bons que ultrapassaram esse limite. São consideradas oportunidades excepcionais segundo o algoritmo.",
     "Free Cash Flow": "Fluxo de caixa livre: dinheiro que sobra após investimentos necessários. Indica capacidade de pagar dividendos.",
     "Payout Ratio": "Percentual do lucro distribuído como dividendos. Valores entre 30-60% são considerados saudáveis.",
     "Debt/Equity": "Relação dívida/patrimônio. Valores altos podem indicar risco financeiro.",
@@ -1330,6 +1329,7 @@ class RendyOrchestrator:
                             del st.session_state.simulacao_cache[ticker]
                             st.rerun()
     
+    # =================== MINHA CARTEIRA IA (BLOCO SUBSTITUÍDO) ===================
     def aba_carteira_agentica(self):
         st.markdown("### 💼 Minha Carteira IA")
 
