@@ -877,7 +877,7 @@ class RendyOrchestrator:
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📊 Ranking Inteligente", 
             "🎯 Simulação IA", 
-            "💼 Carteira Agentes IA", 
+            "💼 Minha Carteira IA", 
             "🤖 Assistente IA", 
             "👤 Perfil", 
             "📚 Glossário",
