@@ -1183,7 +1183,7 @@ class RendyOrchestrator:
     def aba_carteira_agentica(self):
         st.markdown("### 💼 Carteira Agêntica")
         
-       st.markdown("#### 🤖 Sugestões da IA")
+        st.markdown("#### 🤖 Sugestões da IA")
 col1, col2 = st.columns([2, 1])
 with col1:
     st.info("Nossa IA pode sugerir ações baseadas no seu perfil de investidor.")
