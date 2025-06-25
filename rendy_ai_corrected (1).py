@@ -1528,16 +1528,11 @@ class RendyOrchestrator:
                         st.markdown(f"""
                         <div style='background-color: #f8f9fa; padding: 20px; border-radius: 15px; margin-bottom: 15px; 
                                     border-left: 5px solid {"#ff6b35" if analise.super_investimento else "#007bff"};
-                                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
-                            <h4 style='margin: 0 0 10px 0; color: #2c3e50;'>
-                                {"⭐" if analise.super_investimento else "📈"} {analise.ticker.replace('.SA', '')}
-                                {"<span style='color: #e74c3c; font-size: 0.8em; margin-left: 10px;'>SUPER INVESTIMENTO</span>" if analise.super_investimento else ""}
-                            </h4>
-                            <p style='margin: 0; color: #7f8c8d; font-size: 0.9em;'>Peso na carteira: {item['peso_carteira']:.1%}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+                                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                            <h4 style="margin: 0 0 10px 0; color: #2c3e50;">
+                                {"⭐" if analise.super_investimento else "📈"} {analise.ticker.replace(".SA", "")}
+                                {"<span style=\"color: #e74c3c; font-size: 0.8em; margin-left: 10px;\">SUPER INVESTIMENTO</span>" if analise.super_investimento else ""}
+                            </h4>                            <p style="margin: 0; color: #7f8c8d; font-size: 0.9em;">Peso na carteira: {item["peso_carteira"]*100:.1f}%</p>                    </div>                      col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
                         with col1:
                             st.metric("💰 Valor Alocado", f"R$ {item['valor_alocado']:,.2f}")
                             st.metric("🔢 Qtd. Ações", f"{item['qtd_acoes']:,}")
