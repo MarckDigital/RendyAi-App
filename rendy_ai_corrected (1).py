@@ -819,21 +819,22 @@ class RendyOrchestrator:
         salvar_favoritos(st.session_state.favoritos)
     
     def get_dividend_stocks(self, tickers: List[str], max_workers: int = 8) -> List[str]:
-        """Retorna apenas ações pagadoras de dividendos"""
+        """Retorna apenas ações pagadoras de dividendos com score mínimo"""
+        finance_agent = RendyFinanceAgent()
         dividend_tickers = []
         
-        def get_dy(ticker):
+        def get_scored_ticker(ticker):
             try:
-                acao = yf.Ticker(ticker)
-                info = acao.info
-                dy = info.get('dividendYield', 0) or 0
-                if dy > 0:
+                analise = finance_agent.analisar_ativo(ticker)
+                # Usar um critério similar ao do ranking, por exemplo, score > 0 ou DY > 0 e score > um mínimo
+                if analise.dy > 0 and analise.score >= 5: # Adicionando critério de score mínimo
                     return ticker
-            except:
+            except Exception as e:
+                logger.error(f"Erro ao obter score para {ticker}: {e}")
                 return None
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(get_dy, ticker): ticker for ticker in tickers}
+            futures = {executor.submit(get_scored_ticker, ticker): ticker for ticker in tickers}
             for future in concurrent.futures.as_completed(futures):
                 ticker = future.result()
                 if ticker:
@@ -1360,28 +1361,41 @@ class RendyOrchestrator:
             st.markdown("#### 📥 Ações Importadas da Simulação IA")
             for i, acao in enumerate(acoes_simulacao):
                 with st.container():
-                    col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+                    st.markdown(f"""
+                    <div style='background-color: #f0f8ff; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 5px solid #4CAF50;'>
+                        <h4 style='margin: 0; color: #2e7d32;'>🎯 {acao['ticker'].replace('.SA', '')}</h4>
+                        <p style='margin: 5px 0; color: #666;'>Importada da Simulação IA</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    col1, col2, col3 = st.columns([2, 3, 2])
                     with col1:
-                        st.markdown(f"**{acao['ticker'].replace('.SA', '')}**")
+                        st.metric("💰 Valor Investido", f"R$ {acao['valor']:,.2f}")
                     with col2:
-                        st.metric("Valor Investido", f"R$ {acao['valor']:,.2f}")
-                    with col3:
-                        if st.button("🗑️", key=f"remove_sim_{acao['ticker']}_{i}", help="Remover ação da carteira"):
-                            st.session_state.carteira = [a for a in st.session_state.carteira if a != acao]
-                            st.rerun()
-                    with col4:
                         novo_valor = st.number_input(
                             "Atualizar Valor (R$)",
                             min_value=0.0,
                             value=acao['valor'],
                             step=100.0,
-                            key=f"update_sim_{acao['ticker']}_{i}"
+                            key=f"update_sim_{acao['ticker']}_{i}",
+                            help="Digite o novo valor e clique em 'Atualizar'"
                         )
-                        if st.button("🔄", key=f"update_btn_sim_{acao['ticker']}_{i}", help="Atualizar valor"):
-                            for a in st.session_state.carteira:
-                                if a == acao:
-                                    a['valor'] = novo_valor
-                            st.rerun()
+                    with col3:
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            if st.button("🔄 Atualizar", key=f"update_btn_sim_{acao['ticker']}_{i}", 
+                                       help="Atualizar valor", type="secondary", use_container_width=True):
+                                for a in st.session_state.carteira:
+                                    if a == acao:
+                                        a['valor'] = novo_valor
+                                st.success(f"✅ Valor atualizado para {acao['ticker'].replace('.SA', '')}")
+                                st.rerun()
+                        with col_btn2:
+                            if st.button("🗑️ Remover", key=f"remove_sim_{acao['ticker']}_{i}", 
+                                       help="Remover ação da carteira", type="secondary", use_container_width=True):
+                                st.session_state.carteira = [a for a in st.session_state.carteira if a != acao]
+                                st.success(f"✅ {acao['ticker'].replace('.SA', '')} removida da carteira")
+                                st.rerun()
                     st.markdown("---")
         
         st.markdown("#### 🤖 Sugestões da IA")
@@ -1498,25 +1512,43 @@ class RendyOrchestrator:
                 for i, item in enumerate(analise_carteira['analises']):
                     analise = item['analise']
                     with st.container():
-                        col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 1, 1])
+                        # Card visual mais atrativo
+                        st.markdown(f"""
+                        <div style='background-color: #f8f9fa; padding: 20px; border-radius: 15px; margin-bottom: 15px; 
+                                    border-left: 5px solid {"#ff6b35" if analise.super_investimento else "#007bff"};
+                                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
+                            <h4 style='margin: 0 0 10px 0; color: #2c3e50;'>
+                                {"⭐" if analise.super_investimento else "📈"} {analise.ticker.replace('.SA', '')}
+                                {"<span style='color: #e74c3c; font-size: 0.8em; margin-left: 10px;'>SUPER INVESTIMENTO</span>" if analise.super_investimento else ""}
+                            </h4>
+                            <p style='margin: 0; color: #7f8c8d; font-size: 0.9em;'>Peso na carteira: {item['peso_carteira']:.1%}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
                         with col1:
-                            emoji = "⭐" if analise.super_investimento else "📈"
-                            st.markdown(f"**{emoji} {analise.ticker.replace('.SA', '')}**")
-                            st.caption(f"Peso: {item['peso_carteira']:.1%}")
+                            st.metric("💰 Valor Alocado", f"R$ {item['valor_alocado']:,.2f}")
+                            st.metric("🔢 Qtd. Ações", f"{item['qtd_acoes']:,}")
                         with col2:
-                            st.metric("Valor Alocado", f"R$ {item['valor_alocado']:,.2f}")
-                            st.metric("Qtd. Ações", f"{item['qtd_acoes']:,}")
+                            st.metric("⭐ Score", f"{analise.score:.1f}/10")
+                            st.metric("💵 DY", f"{analise.dy:.2%}")
                         with col3:
-                            st.metric("Score", f"{analise.score:.1f}/10")
-                            st.metric("DY", f"{analise.dy:.2%}")
-                        with col4:
-                            st.metric("Renda Anual", f"R$ {item['renda_anual']:,.2f}")
+                            st.metric("💸 Renda Anual", f"R$ {item['renda_anual']:,.2f}")
                             risco_emoji = {"baixo": "🟢", "medio": "🟡", "alto": "🔴"}[analise.risco_nivel]
-                            st.markdown(f"Risco: {risco_emoji}")
-                        with col5:
-                            if st.button("🗑️", key=f"remove_{i}", help="Remover ação da carteira"):
+                            st.markdown(f"**Risco:** {risco_emoji} {analise.risco_nivel.title()}")
+                        with col4:
+                            st.markdown("**Ações:**")
+                            if st.button("🗑️ Remover", key=f"remove_{i}", 
+                                       help="Remover ação da carteira", type="secondary", use_container_width=True):
                                 st.session_state.carteira.pop(i)
+                                st.success(f"✅ {analise.ticker.replace('.SA', '')} removida da carteira")
                                 st.rerun()
+                            
+                            if st.button("📊 Ver Carteira", key=f"view_{i}", 
+                                       help="Ver detalhes da carteira", type="primary", use_container_width=True):
+                                st.session_state.mostrar_carteira = True
+                                st.info(f"📊 Visualizando detalhes de {analise.ticker.replace('.SA', '')}")
+                        
                         with st.expander(f"🔍 Por que {analise.ticker.replace('.SA', '')}?"):
                             explicacao = self.xai_agent.explicacao_score_detalhada(analise)
                             if explicacao['fatores_positivos']:
@@ -1550,9 +1582,42 @@ class RendyOrchestrator:
                     else:
                         st.success("✅ Sua carteira está bem balanceada!")
 
-                if st.button("🗑️ Limpar Carteira", type="secondary"):
-                    st.session_state.carteira = []
-                    st.rerun()
+                # Seção de ações da carteira com melhor layout
+                st.markdown("---")
+                st.markdown("##### 🎛️ Ações da Carteira")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    if st.button("📊 Ver Minha Carteira Completa", type="primary", use_container_width=True):
+                        st.session_state.mostrar_carteira = True
+                        st.balloons()
+                        st.success("📊 Carteira expandida! Veja os detalhes acima.")
+                
+                with col2:
+                    if st.button("🔄 Atualizar Análise", type="secondary", use_container_width=True):
+                        # Limpar cache para forçar nova análise
+                        st.cache_data.clear()
+                        st.success("🔄 Análise atualizada! Os dados foram recarregados.")
+                        st.rerun()
+                
+                with col3:
+                    if st.button("📈 Rebalancear Carteira", type="secondary", use_container_width=True):
+                        st.info("💡 Dica: Para rebalancear, ajuste os valores individuais de cada ação usando os campos 'Atualizar Valor' acima.")
+                
+                with col4:
+                    if st.button("🗑️ Limpar Carteira", type="secondary", use_container_width=True):
+                        if st.session_state.get('confirm_clear', False):
+                            st.session_state.carteira = []
+                            st.session_state.confirm_clear = False
+                            st.success("✅ Carteira limpa com sucesso!")
+                            st.rerun()
+                        else:
+                            st.session_state.confirm_clear = True
+                            st.warning("⚠️ Clique novamente para confirmar a limpeza da carteira.")
+                
+                # Reset do estado de confirmação após um tempo
+                if st.session_state.get('confirm_clear', False):
+                    st.markdown("⚠️ **Atenção:** Clique novamente em 'Limpar Carteira' para confirmar a remoção de todas as ações.")
         else:
             st.info("📝 Sua carteira está vazia. Adicione algumas ações para começar a análise!")
 
