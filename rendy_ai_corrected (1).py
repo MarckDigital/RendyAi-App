@@ -1231,6 +1231,12 @@ class RendyOrchestrator:
     
     def aba_simulacao_ia(self):
         st.markdown("### 🎯 Simulação Inteligente de Investimentos")
+        st.info("""
+        **Explore o Futuro dos Seus Investimentos!**
+        Use esta ferramenta para simular o potencial de crescimento de uma ação específica ao longo do tempo, 
+        considerando diferentes cenários e o reinvestimento de dividendos. 
+        Descubra quanto seu patrimônio e sua renda passiva podem render!
+        """)
         
         # Obter ações pagadoras de dividendos
         if not st.session_state.dividend_tickers:
@@ -1352,6 +1358,12 @@ class RendyOrchestrator:
     
     def aba_carteira_agentica(self):
         st.markdown("### 💼 Minha Carteira IA")
+        st.info("""
+        **Gerencie e Otimize Seus Investimentos!**
+        Nesta aba, você pode visualizar e gerenciar as ações que compõem sua carteira. 
+        Adicione ativos manualmente, importe sugestões da nossa IA ou ações simuladas, 
+        e acompanhe análises detalhadas para otimizar seus rendimentos em dividendos.
+        """)
         
         # Separar ações por origem
         acoes_simulacao = [a for a in st.session_state.carteira if a.get('origem') == 'simulacao']
