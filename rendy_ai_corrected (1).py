@@ -1402,7 +1402,8 @@ def aba_carteira_agentica(self):
         else: 
             st.info("📝 Sua carteira está vazia. Adicione ações usando as sugestões da IA, manualmente ou importando de uma simulação!") 
 
-    def aba_perguntas_frequentes(self):
+    
+        def aba_perguntas_frequentes(self):
         st.markdown("### ❓ Perguntas Frequentes e Ajuda")
         st.info("Encontre respostas para as perguntas mais comuns ou pergunte ao nosso assistente.")
 
