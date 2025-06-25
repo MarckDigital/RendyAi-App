@@ -52,7 +52,7 @@ LISTA_TICKERS_IBOV = [
     'SOMA3.SA', 'SUZB3.SA', 'TAEE11.SA', 'TIMS3.SA', 'TOTS3.SA', 'UGPA3.SA', 
     'USIM5.SA', 'VALE3.SA', 'VBBR3.SA', 'VIIA3.SA', 'VIVT3.SA', 'WEGE3.SA', 
     'YDUQ3.SA'
-]
+][:40]  # Limite para desenvolvimento
 
 SETORES_DISPONIVEIS = [
     'Todos', 'Bancos', 'Energia Elétrica', 'Petróleo e Gás', 'Mineração',
@@ -187,7 +187,19 @@ def salvar_perfil_usuario(perfil: PerfilUsuario):
     try:
         inicializar_ambiente()
         with open(USUARIO_JSON, 'w', encoding='utf-8') as f:
-            json.dump(perfil.__dict__, f, ensure_ascii=False, indent=2)
+            # Serialização explícita para evitar problemas
+            data = {
+                'nome': perfil.nome,
+                'email': perfil.email,
+                'tolerancia_risco': perfil.tolerancia_risco,
+                'horizonte_investimento': perfil.horizonte_investimento,
+                'objetivo_principal': perfil.objetivo_principal,
+                'experiencia': perfil.experiencia,
+                'valor_disponivel': perfil.valor_disponivel,
+                'setores_preferidos': perfil.setores_preferidos,
+                'favoritos': perfil.favoritos
+            }
+            json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Erro ao salvar perfil: {e}")
 
@@ -224,9 +236,12 @@ def analisar_ativos_paralelamente(tickers: List[str], max_workers: int = 8) -> L
         futures = {executor.submit(processar_ticker, ticker): ticker for ticker in tickers}
         
         for future in concurrent.futures.as_completed(futures):
-            analise = future.result()
-            if analise and analise.preco_atual > 0:
-                analises.append(analise)
+            try:
+                analise = future.result()
+                if analise and analise.preco_atual > 0:
+                    analises.append(analise)
+            except Exception as e:
+                logger.error(f"Erro ao processar futuro: {e}")
     
     return analises
 
@@ -235,9 +250,11 @@ class RendyFinanceAgent:
     def __init__(self):
         self.cache_analises = {}
     
-    @st.cache_data(show_spinner="Analisando ativo...", ttl=60*60)  # Cache de 1 hora
-    def analisar_ativo(_self, ticker: str) -> AnaliseAtivo:
+    @st.cache_data(show_spinner="Analisando ativo...", ttl=60*30)  # Cache de 30 minutos
+    def analisar_ativo(ticker: str) -> AnaliseAtivo:  # Corrigido: removido self
         try:
+            time.sleep(0.1)  # Rate limiting para evitar bloqueio
+            
             acao = yf.Ticker(ticker)
             info = acao.info
             historico = acao.history(period="1y")
@@ -248,10 +265,12 @@ class RendyFinanceAgent:
             pl = info.get('trailingPE', 0) or 0
             pvp = info.get('priceToBook', 0) or 0
             roe = info.get('returnOnEquity', 0) or 0
-            preco_atual = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
             
-            if preco_atual == 0 and historico_close is not None and not historico_close.empty:
+            # Tratamento robusto para preço atual
+            preco_atual = info.get('currentPrice') or info.get('regularMarketPrice')
+            if not preco_atual and historico_close is not None and not historico_close.empty:
                 preco_atual = float(historico_close.iloc[-1])
+            preco_atual = preco_atual or 0
             
             free_cash_flow = info.get('freeCashflow', 0) or 0
             payout_ratio = info.get('payoutRatio', 0) or 0
@@ -274,7 +293,7 @@ class RendyFinanceAgent:
             is_super = score_bruto > 10
             
             crescimento_dividendos = np.random.uniform(0.02, 0.15) if dy > 0 else 0
-            risco_nivel = _self._classificar_risco(debt_equity, pl, dy, beta)
+            risco_nivel = RendyFinanceAgent._classificar_risco(debt_equity, pl, dy, beta)
             
             analise = AnaliseAtivo(
                 ticker=ticker,
@@ -320,7 +339,8 @@ class RendyFinanceAgent:
                 ultima_atualizacao=agora_brasilia()
             )
     
-    def _classificar_risco(self, debt_equity: float, pl: float, dy: float, beta: float) -> str:
+    @staticmethod
+    def _classificar_risco(debt_equity: float, pl: float, dy: float, beta: float) -> str:
         pontos_risco = 0
         
         if debt_equity > 1.0:
@@ -375,7 +395,7 @@ class RendyFinanceAgent:
             'valor_total': valor_total,
             'renda_total_anual': renda_total,
             'yield_carteira': renda_total / valor_total if valor_total > 0 else 0,
-            'diversificacao': len(set([a['analise'].setor for a in analises]))
+            'diversificacao': len(set([a['analise'].setor for a in analises))
         }
 
 class RendyInvestAgent:
@@ -542,7 +562,7 @@ class RendyXAI:
 
 class RendyAutoAgent:
     @st.cache_data(show_spinner="Simulando investimento...", ttl=60*30)  # Cache de 30 minutos
-    def simular_investimento(_self, ticker: str, valor_inicial: float, periodo_anos: int = 5) -> Dict:
+    def simular_investimento(ticker: str, valor_inicial: float, periodo_anos: int = 5) -> Dict:
         finance_agent = RendyFinanceAgent()
         analise = finance_agent.analisar_ativo(ticker)
         
@@ -624,7 +644,7 @@ class RendySupportAgent:
         pergunta_lower = pergunta.lower().strip()
         
         for chave, resposta in self.faq.items():
-            if any(palavra in pergunta_lower for palavra in chave.split()):
+            if any(palavra in pergunta_lower for palavras in chave.split()):
                 return resposta
         
         if any(palavra in pergunta_lower for palavra in ['rendy', 'aplicativo', 'app', 'plataforma']):
@@ -836,9 +856,12 @@ class RendyOrchestrator:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(get_scored_ticker, ticker): ticker for ticker in tickers}
             for future in concurrent.futures.as_completed(futures):
-                ticker = future.result()
-                if ticker:
-                    dividend_tickers.append(ticker)
+                try:
+                    ticker = future.result()
+                    if ticker:
+                        dividend_tickers.append(ticker)
+                except Exception as e:
+                    logger.error(f"Erro ao processar futuro: {e}")
         
         return dividend_tickers
     
@@ -1187,19 +1210,20 @@ class RendyOrchestrator:
                     
                     df_ranking = pd.DataFrame(dados_ranking)
                     
-                    # Adicionar coluna de ações com botões
-                    def formatar_linha(row):
-                        return st.button(
-                            "⭐" if row['Favorito'] else "🤍", 
-                            key=f"fav_{row['Ticker']}",
-                            help="Clique para favoritar/desfavoritar"
-                        )
-                    
-                    # Remover colunas que não serão exibidas
-                    df_display = df_ranking.drop(columns=['Ticker', 'Favorito'])
-                    
                     # Exibir tabela
-                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    st.dataframe(df_ranking, use_container_width=True, hide_index=True,
+                                 column_config={
+                                     "Ticker": st.column_config.TextColumn("Ticker"),
+                                     "Empresa": st.column_config.TextColumn("Empresa"),
+                                     "Score": st.column_config.NumberColumn("Score", format="%.1f"),
+                                     "DY": st.column_config.TextColumn("DY"),
+                                     "ROE": st.column_config.TextColumn("ROE"),
+                                     "P/L": st.column_config.TextColumn("P/L"),
+                                     "Risco": st.column_config.TextColumn("Risco"),
+                                     "Setor": st.column_config.TextColumn("Setor"),
+                                     "Super": st.column_config.TextColumn("Super"),
+                                     "Favorito": st.column_config.TextColumn("Favorito"),
+                                 })
                     
                     # Sugestão de carteira
                     if perfil and len(analises_recomendadas) >= 3:
