@@ -1,6 +1,3 @@
-Claro! Aqui está o arquivo completo com as sugestões e correções aplicadas. O código foi revisado para melhorar a estrutura, legibilidade, segurança, e adicionar comentários explicativos.
-
-```python
 import streamlit as st
 import yfinance as yf
 import pandas as pd
