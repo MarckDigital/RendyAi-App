@@ -52,7 +52,7 @@ LISTA_TICKERS_IBOV = [
     'SOMA3.SA', 'SUZB3.SA', 'TAEE11.SA', 'TIMS3.SA', 'TOTS3.SA', 'UGPA3.SA', 
     'USIM5.SA', 'VALE3.SA', 'VBBR3.SA', 'VIIA3.SA', 'VIVT3.SA', 'WEGE3.SA', 
     'YDUQ3.SA'
-][:40]  # Limite para desenvolvimento
+]
 
 SETORES_DISPONIVEIS = [
     'Todos', 'Bancos', 'Energia Elétrica', 'Petróleo e Gás', 'Mineração',
@@ -187,19 +187,7 @@ def salvar_perfil_usuario(perfil: PerfilUsuario):
     try:
         inicializar_ambiente()
         with open(USUARIO_JSON, 'w', encoding='utf-8') as f:
-            # Serialização explícita para evitar problemas
-            data = {
-                'nome': perfil.nome,
-                'email': perfil.email,
-                'tolerancia_risco': perfil.tolerancia_risco,
-                'horizonte_investimento': perfil.horizonte_investimento,
-                'objetivo_principal': perfil.objetivo_principal,
-                'experiencia': perfil.experiencia,
-                'valor_disponivel': perfil.valor_disponivel,
-                'setores_preferidos': perfil.setores_preferidos,
-                'favoritos': perfil.favoritos
-            }
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(perfil.__dict__, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Erro ao salvar perfil: {e}")
 
@@ -236,12 +224,9 @@ def analisar_ativos_paralelamente(tickers: List[str], max_workers: int = 8) -> L
         futures = {executor.submit(processar_ticker, ticker): ticker for ticker in tickers}
         
         for future in concurrent.futures.as_completed(futures):
-            try:
-                analise = future.result()
-                if analise and analise.preco_atual > 0:
-                    analises.append(analise)
-            except Exception as e:
-                logger.error(f"Erro ao processar futuro: {e}")
+            analise = future.result()
+            if analise and analise.preco_atual > 0:
+                analises.append(analise)
     
     return analises
 
@@ -250,11 +235,9 @@ class RendyFinanceAgent:
     def __init__(self):
         self.cache_analises = {}
     
-    @st.cache_data(show_spinner="Analisando ativo...", ttl=60*30)  # Cache de 30 minutos
-    def analisar_ativo(ticker: str) -> AnaliseAtivo:  # Corrigido: removido self
+    @st.cache_data(show_spinner="Analisando ativo...", ttl=60*60)  # Cache de 1 hora
+    def analisar_ativo(_self, ticker: str) -> AnaliseAtivo:
         try:
-            time.sleep(0.1)  # Rate limiting para evitar bloqueio
-            
             acao = yf.Ticker(ticker)
             info = acao.info
             historico = acao.history(period="1y")
@@ -265,12 +248,10 @@ class RendyFinanceAgent:
             pl = info.get('trailingPE', 0) or 0
             pvp = info.get('priceToBook', 0) or 0
             roe = info.get('returnOnEquity', 0) or 0
+            preco_atual = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
             
-            # Tratamento robusto para preço atual
-            preco_atual = info.get('currentPrice') or info.get('regularMarketPrice')
-            if not preco_atual and historico_close is not None and not historico_close.empty:
+            if preco_atual == 0 and historico_close is not None and not historico_close.empty:
                 preco_atual = float(historico_close.iloc[-1])
-            preco_atual = preco_atual or 0
             
             free_cash_flow = info.get('freeCashflow', 0) or 0
             payout_ratio = info.get('payoutRatio', 0) or 0
@@ -293,7 +274,7 @@ class RendyFinanceAgent:
             is_super = score_bruto > 10
             
             crescimento_dividendos = np.random.uniform(0.02, 0.15) if dy > 0 else 0
-            risco_nivel = RendyFinanceAgent._classificar_risco(debt_equity, pl, dy, beta)
+            risco_nivel = _self._classificar_risco(debt_equity, pl, dy, beta)
             
             analise = AnaliseAtivo(
                 ticker=ticker,
@@ -339,8 +320,7 @@ class RendyFinanceAgent:
                 ultima_atualizacao=agora_brasilia()
             )
     
-    @staticmethod
-    def _classificar_risco(debt_equity: float, pl: float, dy: float, beta: float) -> str:
+    def _classificar_risco(self, debt_equity: float, pl: float, dy: float, beta: float) -> str:
         pontos_risco = 0
         
         if debt_equity > 1.0:
@@ -395,7 +375,6 @@ class RendyFinanceAgent:
             'valor_total': valor_total,
             'renda_total_anual': renda_total,
             'yield_carteira': renda_total / valor_total if valor_total > 0 else 0,
-            # CORREÇÃO APLICADA AQUI (faltava um parêntese)
             'diversificacao': len(set([a['analise'].setor for a in analises]))
         }
 
@@ -563,7 +542,7 @@ class RendyXAI:
 
 class RendyAutoAgent:
     @st.cache_data(show_spinner="Simulando investimento...", ttl=60*30)  # Cache de 30 minutos
-    def simular_investimento(ticker: str, valor_inicial: float, periodo_anos: int = 5) -> Dict:
+    def simular_investimento(_self, ticker: str, valor_inicial: float, periodo_anos: int = 5) -> Dict:
         finance_agent = RendyFinanceAgent()
         analise = finance_agent.analisar_ativo(ticker)
         
@@ -857,12 +836,9 @@ class RendyOrchestrator:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(get_scored_ticker, ticker): ticker for ticker in tickers}
             for future in concurrent.futures.as_completed(futures):
-                try:
-                    ticker = future.result()
-                    if ticker:
-                        dividend_tickers.append(ticker)
-                except Exception as e:
-                    logger.error(f"Erro ao processar futuro: {e}")
+                ticker = future.result()
+                if ticker:
+                    dividend_tickers.append(ticker)
         
         return dividend_tickers
     
@@ -1211,20 +1187,19 @@ class RendyOrchestrator:
                     
                     df_ranking = pd.DataFrame(dados_ranking)
                     
+                    # Adicionar coluna de ações com botões
+                    def formatar_linha(row):
+                        return st.button(
+                            "⭐" if row['Favorito'] else "🤍", 
+                            key=f"fav_{row['Ticker']}",
+                            help="Clique para favoritar/desfavoritar"
+                        )
+                    
+                    # Remover colunas que não serão exibidas
+                    df_display = df_ranking.drop(columns=['Ticker', 'Favorito'])
+                    
                     # Exibir tabela
-                    st.dataframe(df_ranking, use_container_width=True, hide_index=True,
-                                 column_config={
-                                     "Ticker": st.column_config.TextColumn("Ticker"),
-                                     "Empresa": st.column_config.TextColumn("Empresa"),
-                                     "Score": st.column_config.NumberColumn("Score", format="%.1f"),
-                                     "DY": st.column_config.TextColumn("DY"),
-                                     "ROE": st.column_config.TextColumn("ROE"),
-                                     "P/L": st.column_config.TextColumn("P/L"),
-                                     "Risco": st.column_config.TextColumn("Risco"),
-                                     "Setor": st.column_config.TextColumn("Setor"),
-                                     "Super": st.column_config.TextColumn("Super"),
-                                     "Favorito": st.column_config.TextColumn("Favorito"),
-                                 })
+                    st.dataframe(df_display, use_container_width=True, hide_index=True)
                     
                     # Sugestão de carteira
                     if perfil and len(analises_recomendadas) >= 3:
@@ -1450,39 +1425,6 @@ class RendyOrchestrator:
                     else:
                         st.error("Perfil não encontrado. Configure seu perfil na aba 'Perfil'.")
 
-        # ======== AÇÕES DA CARTEIRA NO TOPO ========
-        if st.session_state.carteira:
-            st.markdown("---")
-            st.markdown("#### 🎛️ Ações da Carteira")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                if st.button("📊 Ver Minha Carteira Completa", type="primary", use_container_width=True, key="ver_carteira_top"):
-                    st.session_state.mostrar_carteira = True
-                    st.balloons()
-                    st.success("📊 Carteira expandida! Veja os detalhes abaixo.")
-            with col2:
-                if st.button("🔄 Atualizar Análise", type="secondary", use_container_width=True, key="atualizar_analise_top"):
-                    # Limpar cache para forçar nova análise
-                    st.cache_data.clear()
-                    st.success("🔄 Análise atualizada! Os dados foram recarregados.")
-                    st.rerun()
-            with col3:
-                if st.button("📈 Rebalancear Carteira", type="secondary", use_container_width=True, key="rebalancear_top"):
-                    st.info("💡 Dica: Para rebalancear, ajuste os valores individuais de cada ação usando os campos 'Atualizar Valor' na seção de detalhes da carteira abaixo.")
-            with col4:
-                if st.button("🗑️ Limpar Carteira", type="secondary", use_container_width=True, key="limpar_carteira_top"):
-                    if st.session_state.get('confirm_clear', False):
-                        st.session_state.carteira = []
-                        st.session_state.confirm_clear = False
-                        st.success("✅ Carteira limpa com sucesso!")
-                        st.rerun()
-                    else:
-                        st.session_state.confirm_clear = True
-                        st.warning("⚠️ Clique novamente para confirmar a limpeza da carteira.")
-            # Reset do estado de confirmação após um tempo
-            if st.session_state.get('confirm_clear', False):
-                st.markdown("⚠️ **Atenção:** Clique novamente em 'Limpar Carteira' para confirmar a remoção de todas as ações.")
-        
         # Exibir sugestões
         if 'sugestoes_carteira' in st.session_state and st.session_state.sugestoes_carteira:
             st.markdown("##### 📋 Ações Recomendadas para Você")
@@ -1586,16 +1528,11 @@ class RendyOrchestrator:
                         st.markdown(f"""
                         <div style='background-color: #f8f9fa; padding: 20px; border-radius: 15px; margin-bottom: 15px; 
                                     border-left: 5px solid {"#ff6b35" if analise.super_investimento else "#007bff"};
-                                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
+                                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                             <h4 style="margin: 0 0 10px 0; color: #2c3e50;">
                                 {"⭐" if analise.super_investimento else "📈"} {analise.ticker.replace(".SA", "")}
                                 {"<span style=\"color: #e74c3c; font-size: 0.8em; margin-left: 10px;\">SUPER INVESTIMENTO</span>" if analise.super_investimento else ""}
-                            </h4>
-                            <p style="margin: 0; color: #7f8c8d; font-size: 0.9em;">Peso na carteira: {item["peso_carteira"]*100:.1f}%</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+                            </h4>                            <p style="margin: 0; color: #7f8c8d; font-size: 0.9em;">Peso na carteira: {item["peso_carteira"]*100:.1f}%</p>                    </div>                      col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
                         with col1:
                             st.metric("💰 Valor Alocado", f"R$ {item['valor_alocado']:,.2f}")
                             st.metric("🔢 Qtd. Ações", f"{item['qtd_acoes']:,}")
@@ -1614,8 +1551,8 @@ class RendyOrchestrator:
                                 st.success(f"✅ {analise.ticker.replace('.SA', '')} removida da carteira")
                                 st.rerun()
                             
-                            if st.button("📊 Ver Detalhes", key=f"view_{i}", 
-                                       help="Ver detalhes da ação", type="primary", use_container_width=True):
+                            if st.button("📊 Ver Carteira", key=f"view_{i}", 
+                                       help="Ver detalhes da carteira", type="primary", use_container_width=True):
                                 st.session_state.mostrar_carteira = True
                                 st.info(f"📊 Visualizando detalhes de {analise.ticker.replace('.SA', '')}")
                         
@@ -1651,6 +1588,43 @@ class RendyOrchestrator:
                             st.markdown(f"• {rec}")
                     else:
                         st.success("✅ Sua carteira está bem balanceada!")
+
+                # Seção de ações da carteira com melhor layout
+                st.markdown("---")
+                st.markdown("##### 🎛️ Ações da Carteira")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    if st.button("📊 Ver Minha Carteira Completa", type="primary", use_container_width=True):
+                        st.session_state.mostrar_carteira = True
+                        st.balloons()
+                        st.success("📊 Carteira expandida! Veja os detalhes acima.")
+                
+                with col2:
+                    if st.button("🔄 Atualizar Análise", type="secondary", use_container_width=True):
+                        # Limpar cache para forçar nova análise
+                        st.cache_data.clear()
+                        st.success("🔄 Análise atualizada! Os dados foram recarregados.")
+                        st.rerun()
+                
+                with col3:
+                    if st.button("📈 Rebalancear Carteira", type="secondary", use_container_width=True):
+                        st.info("💡 Dica: Para rebalancear, ajuste os valores individuais de cada ação usando os campos 'Atualizar Valor' acima.")
+                
+                with col4:
+                    if st.button("🗑️ Limpar Carteira", type="secondary", use_container_width=True):
+                        if st.session_state.get('confirm_clear', False):
+                            st.session_state.carteira = []
+                            st.session_state.confirm_clear = False
+                            st.success("✅ Carteira limpa com sucesso!")
+                            st.rerun()
+                        else:
+                            st.session_state.confirm_clear = True
+                            st.warning("⚠️ Clique novamente para confirmar a limpeza da carteira.")
+                
+                # Reset do estado de confirmação após um tempo
+                if st.session_state.get('confirm_clear', False):
+                    st.markdown("⚠️ **Atenção:** Clique novamente em 'Limpar Carteira' para confirmar a remoção de todas as ações.")
         else:
             st.info("📝 Sua carteira está vazia. Adicione algumas ações para começar a análise!")
 
