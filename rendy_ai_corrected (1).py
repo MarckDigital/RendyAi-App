@@ -395,7 +395,8 @@ class RendyFinanceAgent:
             'valor_total': valor_total,
             'renda_total_anual': renda_total,
             'yield_carteira': renda_total / valor_total if valor_total > 0 else 0,
-            'diversificacao': len(set([a['analise'].setor for a in analises))
+            # CORREÇÃO APLICADA AQUI (faltava um parêntese)
+            'diversificacao': len(set([a['analise'].setor for a in analises]))
         }
 
 class RendyInvestAgent:
@@ -644,7 +645,7 @@ class RendySupportAgent:
         pergunta_lower = pergunta.lower().strip()
         
         for chave, resposta in self.faq.items():
-            if any(palavra in pergunta_lower for palavras in chave.split()):
+            if any(palavra in pergunta_lower for palavra in chave.split()):
                 return resposta
         
         if any(palavra in pergunta_lower for palavra in ['rendy', 'aplicativo', 'app', 'plataforma']):
